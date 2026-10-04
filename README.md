@@ -42,6 +42,15 @@ python manage.py test
 
 Refer to the project configuration and documentation for any additional environment variables or setup requirements.
 
+## Tutor API
+
+See [docs/tutor-api.md](docs/tutor-api.md) for the authenticated tutor API,
+retrieval-only behavior when no LLM is configured, and frontend environment
+variables.
+
 ## Project Status
 
-Frontend linting, TypeScript checks, and production build have been validated. Backend testing and full frontend-backend integration should be verified separately.
+The tutor API and frontend integration are implemented. Frontend linting,
+TypeScript checks, production build, and focused Django API tests have been
+validated. A live frontend-to-backend session should still be verified after
+applying backend migrations and configuring real-mode environment variables.

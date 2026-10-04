@@ -84,6 +84,19 @@ class KnowledgeSearchAPITestCase(APITestCase):
         response = self.client.get("/api/knowledge/search", {"q": long_q})
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    @patch("knowledge.views.get_embedding_service")
+    def test_search_failure_does_not_expose_internal_error(self, mock_get_embedding_service):
+        mock_get_embedding_service.return_value.embed_query.side_effect = RuntimeError(
+            "private model path"
+        )
+        self.client.credentials(HTTP_AUTHORIZATION=f"Token {self.token1.key}")
+
+        response = self.client.get("/api/knowledge/search", {"q": "backpropagation"})
+
+        self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        self.assertEqual(response.data["error"], "Search failed. Please try again.")
+        self.assertNotIn("private model path", str(response.data))
+
     @patch("knowledge.views.get_vectorstore")
     @patch("knowledge.embeddings.EmbeddingService._get_model")
     def test_authenticated_search_with_bearer_token(self, mock_get_model, mock_get_vs):

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Sparkles,
@@ -21,12 +21,13 @@ import { Modal } from '@/components/ui/Modal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { AgentPanel } from '@/components/AgentPanel';
 import { toast } from '@/components/ui/Toast';
-import { mockChatHistory, mockChatSources, mockAiResponses, defaultAiResponse, mockAgentActivities } from '@/data/mockChat';
+import { mockAgentActivities } from '@/data/mockChat';
+import { tutorService, TutorServiceError } from '@/services/tutorService';
 import type { ChatMessage, ChatSource, AgentActivity } from '@/types';
 
-const typeIcon: Record<string, typeof FileText> = { pdf: FileText, ppt: Presentation, video: Video };
-const typeColor: Record<string, string> = { pdf: 'text-primary', ppt: 'text-gold', video: 'text-plum' };
-const typeBg: Record<string, string> = { pdf: 'bg-primary-soft', ppt: 'bg-gold-soft', video: 'bg-plum-soft' };
+const typeIcon: Record<string, typeof FileText> = { pdf: FileText, ppt: Presentation, video: Video, other: FileText };
+const typeColor: Record<string, string> = { pdf: 'text-primary', ppt: 'text-gold', video: 'text-plum', other: 'text-primary' };
+const typeBg: Record<string, string> = { pdf: 'bg-primary-soft', ppt: 'bg-gold-soft', video: 'bg-plum-soft', other: 'bg-primary-soft' };
 
 const tutorActions = [
   { label: 'Explain Simply', key: 'explain simply', icon: Lightbulb },
@@ -62,87 +63,157 @@ function formatContent(content: string) {
 
 export function TutorPage() {
   const navigate = useNavigate();
-  const [messages, setMessages] = useState<ChatMessage[]>(mockChatHistory);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(true);
   const [context, setContext] = useState('All Materials');
   const [contextOpen, setContextOpen] = useState(false);
   const [previewSource, setPreviewSource] = useState<ChatSource | null>(null);
-  const [agents, setAgents] = useState<AgentActivity[]>(mockAgentActivities);
-  const [error, setError] = useState(false);
+  const [agents, setAgents] = useState<AgentActivity[]>(() =>
+    tutorService.isMockMode
+      ? mockAgentActivities
+      : [{
+          agent: 'Knowledge Retrieval',
+          status: 'idle',
+          description: 'Ready to search your study materials',
+        }]
+  );
+  const [error, setError] = useState<string | null>(null);
+  const [retryRequest, setRetryRequest] = useState<{
+    content: string;
+    actionKey?: string;
+    messageId: string;
+  } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const sendingRef = useRef(false);
+
+  const loadHistory = useCallback(async () => {
+    setHistoryLoading(true);
+    setError(null);
+    try {
+      setMessages(await tutorService.getChatHistory());
+    } catch (loadError) {
+      setError(
+        loadError instanceof TutorServiceError
+          ? loadError.message
+          : 'Unable to load your conversation. Please try again.'
+      );
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadHistory();
+  }, [loadHistory]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages, loading]);
 
   const sendMessage = async (content: string, actionKey?: string) => {
-    if (!content.trim() && !actionKey) return;
-    setError(false);
+    const trimmedContent = content.trim();
+    if (!trimmedContent || loading || historyLoading || sendingRef.current) return;
+    if (trimmedContent.length > 1000) {
+      setError('Enter a message of up to 1000 characters.');
+      return;
+    }
+    sendingRef.current = true;
+    setError(null);
+    setRetryRequest(null);
 
     const studentMsg: ChatMessage = {
       id: `msg-${Date.now()}`,
       role: 'student',
-      content: actionKey ? `${actionKey.charAt(0).toUpperCase() + actionKey.slice(1)}` : content,
+      content: actionKey ? `${actionKey.charAt(0).toUpperCase() + actionKey.slice(1)}` : trimmedContent,
       timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
     };
     setMessages((prev) => [...prev, studentMsg]);
     setInput('');
     setLoading(true);
 
-    // Animate agents
-    setAgents(mockAgentActivities.map((a, i) => ({
-      ...a,
-      status: i === 0 ? 'active' : 'idle',
-    })));
-    setTimeout(() => {
-      setAgents(mockAgentActivities.map((a, i) => i <= 1 ? { ...a, status: 'done' as const } : i === 2 ? { ...a, status: 'active' as const } : a));
-    }, 600);
-    setTimeout(() => {
-      setAgents(mockAgentActivities.map((a, i) => i <= 2 ? { ...a, status: 'done' as const } : i === 3 ? { ...a, status: 'active' as const } : a));
-    }, 1000);
-
-    await new Promise((r) => setTimeout(r, 1400));
-
-    const lowerContent = content.toLowerCase();
-    let responseText = defaultAiResponse;
-    if (actionKey && mockAiResponses[actionKey]) {
-      responseText = mockAiResponses[actionKey];
-    } else {
-      for (const key of Object.keys(mockAiResponses)) {
-        if (lowerContent.includes(key.split(' ')[0])) {
-          responseText = mockAiResponses[key];
-          break;
-        }
+    setAgents(
+      tutorService.isMockMode
+        ? mockAgentActivities.map((activity, i) => ({
+            ...activity,
+            status: i === 0 ? 'active' : 'idle',
+          }))
+        : [{
+            agent: 'Knowledge Retrieval',
+            status: 'active',
+            description: 'Searching your study materials',
+          }]
+    );
+    try {
+      if (tutorService.isMockMode) {
+        setTimeout(() => {
+          setAgents(mockAgentActivities.map((a, i) => i <= 1 ? { ...a, status: 'done' as const } : i === 2 ? { ...a, status: 'active' as const } : a));
+        }, 600);
+        setTimeout(() => {
+          setAgents(mockAgentActivities.map((a, i) => i <= 2 ? { ...a, status: 'done' as const } : i === 3 ? { ...a, status: 'active' as const } : a));
+        }, 1000);
       }
-    }
 
-    // Simulate streaming
-    const aiMsg: ChatMessage = {
-      id: `msg-${Date.now()}-ai`,
-      role: 'ai',
-      content: '',
-      sources: mockChatSources,
-      timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
-      isStreaming: true,
-    };
-    setMessages((prev) => [...prev, aiMsg]);
-    setLoading(false);
+      const response = await tutorService.sendMessage(trimmedContent, actionKey);
+      if (tutorService.isMockMode) {
+        const aiMsg = { ...response, content: '', isStreaming: true };
+        setMessages((prev) => [...prev, aiMsg]);
+        setLoading(false);
 
-    const words = responseText.split(' ');
-    for (let i = 0; i < words.length; i += 3) {
-      await new Promise((r) => setTimeout(r, 30));
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === aiMsg.id ? { ...m, content: words.slice(0, i + 3).join(' ') } : m
-        )
+        const words = response.content.split(' ');
+        for (let i = 0; i < words.length; i += 3) {
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          setMessages((prev) =>
+            prev.map((message) =>
+              message.id === aiMsg.id
+                ? { ...message, content: words.slice(0, i + 3).join(' ') }
+                : message
+            )
+          );
+        }
+        setMessages((prev) =>
+          prev.map((message) =>
+            message.id === aiMsg.id ? { ...message, isStreaming: false } : message
+          )
+        );
+      } else {
+        setMessages((prev) => [...prev, response]);
+      }
+      if (tutorService.isMockMode) {
+        setAgents(mockAgentActivities.map((activity) => ({ ...activity, status: 'done' as const })));
+        setTimeout(() => {
+          setAgents(mockAgentActivities.map((activity, i) =>
+            i <= 1 ? { ...activity, status: 'done' as const } : { ...activity, status: 'idle' as const }
+          ));
+        }, 2000);
+      } else {
+        setAgents([{
+          agent: 'Knowledge Retrieval',
+          status: 'done',
+          description: 'Retrieved passages from your study materials',
+        }]);
+      }
+    } catch (sendError) {
+      setRetryRequest({ content: trimmedContent, actionKey, messageId: studentMsg.id });
+      setError(
+        sendError instanceof TutorServiceError
+          ? sendError.message
+          : 'The tutor service is temporarily unavailable. Please try again.'
       );
+      setAgents(
+        tutorService.isMockMode
+          ? mockAgentActivities.map((activity) => ({ ...activity, status: 'idle' as const }))
+          : [{
+              agent: 'Knowledge Retrieval',
+              status: 'idle',
+              description: 'Ready to search your study materials',
+            }]
+      );
+    } finally {
+      sendingRef.current = false;
+      setLoading(false);
     }
-    setMessages((prev) => prev.map((m) => (m.id === aiMsg.id ? { ...m, isStreaming: false } : m)));
-    setAgents(mockAgentActivities.map((a) => ({ ...a, status: 'done' as const })));
-    setTimeout(() => {
-      setAgents(mockAgentActivities.map((a, i) => i <= 1 ? { ...a, status: 'done' as const } : { ...a, status: 'idle' as const }));
-    }, 2000);
   };
 
   const handleAction = (action: { label: string; key: string; icon: typeof Lightbulb }) => {
@@ -151,13 +222,18 @@ export function TutorPage() {
       navigate('/quiz');
       return;
     }
-    sendMessage(`Please ${action.key}`, action.key);
+    const previousQuestion = [...messages].reverse().find((message) => message.role === 'student');
+    sendMessage(previousQuestion?.content || `Please ${action.key}`, action.key);
   };
 
   const handleRetry = () => {
-    setMessages((prev) => prev.slice(0, -1));
-    setError(false);
-    sendMessage(messages[messages.length - 1]?.content || 'What is backpropagation?');
+    if (!retryRequest) {
+      void loadHistory();
+      return;
+    }
+    const request = retryRequest;
+    setMessages((prev) => prev.filter((message) => message.id !== request.messageId));
+    void sendMessage(request.content, request.actionKey);
   };
 
   return (
@@ -202,7 +278,9 @@ export function TutorPage() {
         <Card className="flex flex-col min-h-0">
           {/* Messages */}
           <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-            {messages.length === 0 && !loading ? (
+            {historyLoading ? (
+              <p className="text-sm text-text-secondary text-center py-6">Loading conversation...</p>
+            ) : messages.length === 0 && !loading ? (
               <EmptyState
                 icon={<Sparkles size={28} className="text-plum" />}
                 title="Start a conversation with your AI Tutor"
@@ -249,9 +327,10 @@ export function TutorPage() {
                                         [{idx + 1}] {source.title}
                                       </p>
                                       <p className="text-[10px] text-text-secondary mt-0.5">
-                                        {source.page && `Chapter 4 • Page ${source.page}`}
+                                        {source.page && `Page ${source.page}`}
                                         {source.slide && `Slide ${source.slide}`}
                                         {source.timestamp && `Timestamp: ${source.timestamp}`}
+                                        {typeof source.relevance === 'number' && `Match ${Math.round(source.relevance * 100)}%`}
                                       </p>
                                     </div>
                                   </button>
@@ -307,11 +386,11 @@ export function TutorPage() {
                 <div className="rounded-2xl border border-danger/30 bg-danger/10 px-4 py-3 max-w-md">
                   <div className="flex items-center gap-2 mb-2">
                     <AlertCircle size={16} className="text-danger" />
-                    <span className="text-sm font-medium text-danger">Unable to generate response</span>
+                    <span className="text-sm font-medium text-danger">Unable to continue</span>
                   </div>
-                  <p className="text-xs text-text-secondary mb-3">The AI service is temporarily unavailable. Please try again.</p>
+                  <p className="text-xs text-text-secondary mb-3">{error}</p>
                   <Button size="sm" variant="secondary" icon={<RotateCcw size={14} />} onClick={handleRetry}>
-                    Retry
+                    {retryRequest ? 'Retry message' : 'Retry loading history'}
                   </Button>
                 </div>
               </div>
@@ -325,19 +404,20 @@ export function TutorPage() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !loading) {
+                  if (e.key === 'Enter' && !loading && !historyLoading) {
                     sendMessage(input);
                   }
                 }}
+                maxLength={1000}
                 placeholder="Ask anything about your study materials..."
                 className="flex-1 rounded-lg border border-border bg-surface px-4 py-3 text-sm text-text-primary placeholder:text-text-secondary focus:border-plum focus:outline-none focus:ring-1 focus:ring-plum"
-                disabled={loading}
+                disabled={loading || historyLoading}
               />
               <Button
                 variant="ai"
                 icon={<Send size={16} />}
                 onClick={() => sendMessage(input)}
-                disabled={loading || !input.trim()}
+                disabled={loading || historyLoading || !input.trim()}
               >
                 <span className="hidden sm:inline">Send</span>
               </Button>
@@ -356,6 +436,7 @@ export function TutorPage() {
                   <button
                     key={topic}
                     onClick={() => sendMessage(`What is ${topic.toLowerCase()}?`)}
+                    disabled={loading || historyLoading}
                     className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-text-secondary hover:bg-surface-elevated hover:text-text-primary transition-colors"
                   >
                     <BookOpen size={14} className="text-plum" />

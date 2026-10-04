@@ -40,11 +40,15 @@ export interface KnowledgeSearchResult {
 export interface ChatSource {
   id: string;
   title: string;
-  type: MaterialType;
+  type: MaterialType | 'other';
   page?: number;
   slide?: number;
   timestamp?: string;
   snippet: string;
+  relevance?: number;
+  materialId?: number;
+  documentId?: number;
+  chunkIndex?: number;
 }
 
 export interface ChatMessage {

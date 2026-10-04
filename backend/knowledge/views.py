@@ -70,10 +70,10 @@ def knowledge_search(request):
         # Direct list response matching frontend knowledgeService contract
         return Response(results, status=status.HTTP_200_OK)
 
-    except Exception as e:
-        logger.error(f"Search failed for user {request.user.id}: {e}", exc_info=True)
+    except Exception:
+        logger.exception("Search failed for user %s", request.user.id)
         return Response(
-            {"error": f"Search failed: {str(e)}"},
+            {"error": "Search failed. Please try again."},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 

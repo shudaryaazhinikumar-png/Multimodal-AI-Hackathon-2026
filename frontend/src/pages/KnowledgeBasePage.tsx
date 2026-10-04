@@ -19,9 +19,9 @@ import { toast } from '@/components/ui/Toast';
 import { mockMaterials, mockSearchResults } from '@/data/mockMaterials';
 import type { Material, MaterialType, KnowledgeSearchResult, ChatSource } from '@/types';
 
-const typeIcon: Record<MaterialType, typeof FileText> = { pdf: FileText, ppt: Presentation, video: Video };
-const typeColor: Record<MaterialType, string> = { pdf: 'text-primary', ppt: 'text-gold', video: 'text-plum' };
-const typeBg: Record<MaterialType, string> = { pdf: 'bg-primary-soft', ppt: 'bg-gold-soft', video: 'bg-plum-soft' };
+const typeIcon: Record<MaterialType | 'other', typeof FileText> = { pdf: FileText, ppt: Presentation, video: Video, other: FileText };
+const typeColor: Record<MaterialType | 'other', string> = { pdf: 'text-primary', ppt: 'text-gold', video: 'text-plum', other: 'text-primary' };
+const typeBg: Record<MaterialType | 'other', string> = { pdf: 'bg-primary-soft', ppt: 'bg-gold-soft', video: 'bg-plum-soft', other: 'bg-primary-soft' };
 
 const tabs = ['All', 'Textbooks', 'Slides', 'Videos'];
 
