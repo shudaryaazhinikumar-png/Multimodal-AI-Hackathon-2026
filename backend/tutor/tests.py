@@ -211,7 +211,139 @@ class TutorAPITestCase(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
         self.assertEqual(response.data["code"], "generation_unavailable")
+        self.assertEqual(response.data["error"], "AI tutor answer generation is temporarily unavailable. Please try again.")
         self.assertNotIn("secret_api_key_123", str(response.data))
+        self.assertNotIn("Upstream connection", str(response.data))
+        self.assertEqual(TutorMessage.objects.count(), 0)
+
+    @patch("ai.tutor_service.get_llm_service")
+    @patch("ai.tutor_service.get_vectorstore")
+    @patch("ai.tutor_service.get_embedding_service")
+    def test_chat_gemini_503_unavailable_returns_controlled_503_without_leak(
+        self,
+        mock_get_embedding_service,
+        mock_get_vectorstore,
+        mock_get_llm_service,
+    ):
+        mock_get_embedding_service.return_value.embed_query.return_value = [0.1, 0.2]
+        mock_get_vectorstore.return_value.search.return_value = [
+            {"id": "c1", "text": "Notes", "sourceName": "Doc", "sourceType": "pdf"}
+        ]
+        mock_llm = MagicMock()
+        mock_llm.generate.side_effect = LLMUnavailableError("Gemini service temporarily unavailable (HTTP 503).")
+        mock_get_llm_service.return_value = mock_llm
+
+        self.authenticate()
+        response = self.client.post(self.chat_url, {"content": "Explain relativity"})
+
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertEqual(response.data["code"], "generation_unavailable")
+        self.assertEqual(response.data["error"], "AI tutor answer generation is temporarily unavailable. Please try again.")
+        self.assertNotIn("HTTP 503", str(response.data))
+        self.assertEqual(TutorMessage.objects.count(), 0)
+
+    @patch("ai.tutor_service.get_llm_service")
+    @patch("ai.tutor_service.get_vectorstore")
+    @patch("ai.tutor_service.get_embedding_service")
+    def test_chat_gemini_429_rate_limit_returns_controlled_503_without_leak(
+        self,
+        mock_get_embedding_service,
+        mock_get_vectorstore,
+        mock_get_llm_service,
+    ):
+        mock_get_embedding_service.return_value.embed_query.return_value = [0.1, 0.2]
+        mock_get_vectorstore.return_value.search.return_value = [
+            {"id": "c1", "text": "Notes", "sourceName": "Doc", "sourceType": "pdf"}
+        ]
+        mock_llm = MagicMock()
+        mock_llm.generate.side_effect = LLMRateLimitError("Gemini rate limit exceeded (HTTP 429).")
+        mock_get_llm_service.return_value = mock_llm
+
+        self.authenticate()
+        response = self.client.post(self.chat_url, {"content": "Explain quantum mechanics"})
+
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertEqual(response.data["code"], "generation_unavailable")
+        self.assertEqual(response.data["error"], "AI tutor answer generation is temporarily unavailable. Please try again.")
+        self.assertNotIn("HTTP 429", str(response.data))
+        self.assertEqual(TutorMessage.objects.count(), 0)
+
+    @patch("ai.tutor_service.get_llm_service")
+    @patch("ai.tutor_service.get_vectorstore")
+    @patch("ai.tutor_service.get_embedding_service")
+    def test_chat_gemini_400_invalid_request_returns_controlled_503_without_leak(
+        self,
+        mock_get_embedding_service,
+        mock_get_vectorstore,
+        mock_get_llm_service,
+    ):
+        mock_get_embedding_service.return_value.embed_query.return_value = [0.1, 0.2]
+        mock_get_vectorstore.return_value.search.return_value = [
+            {"id": "c1", "text": "Notes", "sourceName": "Doc", "sourceType": "pdf"}
+        ]
+        mock_llm = MagicMock()
+        mock_llm.generate.side_effect = LLMInvalidRequestError("Gemini API request invalid (HTTP 400).")
+        mock_get_llm_service.return_value = mock_llm
+
+        self.authenticate()
+        response = self.client.post(self.chat_url, {"content": "Explain entropy"})
+
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertEqual(response.data["code"], "generation_unavailable")
+        self.assertEqual(response.data["error"], "AI tutor answer generation is temporarily unavailable. Please try again.")
+        self.assertNotIn("HTTP 400", str(response.data))
+        self.assertEqual(TutorMessage.objects.count(), 0)
+
+    @patch("ai.tutor_service.get_llm_service")
+    @patch("ai.tutor_service.get_vectorstore")
+    @patch("ai.tutor_service.get_embedding_service")
+    def test_chat_gemini_auth_error_returns_controlled_503_without_leak(
+        self,
+        mock_get_embedding_service,
+        mock_get_vectorstore,
+        mock_get_llm_service,
+    ):
+        mock_get_embedding_service.return_value.embed_query.return_value = [0.1, 0.2]
+        mock_get_vectorstore.return_value.search.return_value = [
+            {"id": "c1", "text": "Notes", "sourceName": "Doc", "sourceType": "pdf"}
+        ]
+        mock_llm = MagicMock()
+        mock_llm.generate.side_effect = LLMAuthError("Gemini authentication failed with status 401.")
+        mock_get_llm_service.return_value = mock_llm
+
+        self.authenticate()
+        response = self.client.post(self.chat_url, {"content": "Explain thermodynamics"})
+
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertEqual(response.data["code"], "generation_unavailable")
+        self.assertEqual(response.data["error"], "AI tutor answer generation is temporarily unavailable. Please try again.")
+        self.assertNotIn("401", str(response.data))
+        self.assertEqual(TutorMessage.objects.count(), 0)
+
+    @patch("ai.tutor_service.get_llm_service")
+    @patch("ai.tutor_service.get_vectorstore")
+    @patch("ai.tutor_service.get_embedding_service")
+    def test_chat_gemini_malformed_response_returns_controlled_503_without_leak(
+        self,
+        mock_get_embedding_service,
+        mock_get_vectorstore,
+        mock_get_llm_service,
+    ):
+        mock_get_embedding_service.return_value.embed_query.return_value = [0.1, 0.2]
+        mock_get_vectorstore.return_value.search.return_value = [
+            {"id": "c1", "text": "Notes", "sourceName": "Doc", "sourceType": "pdf"}
+        ]
+        mock_llm = MagicMock()
+        mock_llm.generate.side_effect = LLMGenerationError("Invalid response structure from Gemini API.")
+        mock_get_llm_service.return_value = mock_llm
+
+        self.authenticate()
+        response = self.client.post(self.chat_url, {"content": "Explain biology"})
+
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertEqual(response.data["code"], "generation_unavailable")
+        self.assertEqual(response.data["error"], "AI tutor answer generation is temporarily unavailable. Please try again.")
+        self.assertNotIn("Invalid response structure", str(response.data))
         self.assertEqual(TutorMessage.objects.count(), 0)
 
     @patch("ai.tutor_service.get_llm_service")
@@ -474,6 +606,80 @@ class AIModuleUnitTests(APITestCase):
             service.generate("Overloaded prompt")
         self.assertEqual(mock_urlopen.call_count, 3)
         self.assertEqual(mock_sleep.call_count, 2)
+
+    @patch("urllib.request.urlopen")
+    def test_gemini_service_403_fails_immediately_without_retry(self, mock_urlopen):
+        err_file = io.BytesIO(b'{"error": {"message": "Permission denied"}}')
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            url="https://generativelanguage.googleapis.com",
+            code=403,
+            msg="Forbidden",
+            hdrs={},
+            fp=err_file,
+        )
+
+        mock_sleep = MagicMock()
+        service = GeminiLLMService(api_key="test-gemini-key", max_retries=3, sleep_func=mock_sleep)
+        with self.assertRaises(LLMAuthError):
+            service.generate("Forbidden prompt")
+        self.assertEqual(mock_urlopen.call_count, 1)
+        self.assertEqual(mock_sleep.call_count, 0)
+
+    @patch("urllib.request.urlopen")
+    def test_gemini_service_404_fails_immediately_without_retry(self, mock_urlopen):
+        err_file = io.BytesIO(b'{"error": {"message": "Model not found"}}')
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            url="https://generativelanguage.googleapis.com",
+            code=404,
+            msg="Not Found",
+            hdrs={},
+            fp=err_file,
+        )
+
+        mock_sleep = MagicMock()
+        service = GeminiLLMService(api_key="test-gemini-key", max_retries=3, sleep_func=mock_sleep)
+        with self.assertRaises(LLMInvalidRequestError):
+            service.generate("Not found prompt")
+        self.assertEqual(mock_urlopen.call_count, 1)
+        self.assertEqual(mock_sleep.call_count, 0)
+
+    @patch("urllib.request.urlopen")
+    def test_gemini_service_malformed_json_raises_generation_error(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.read.return_value = b"{invalid-json"
+        mock_response.__enter__.return_value = mock_response
+        mock_urlopen.return_value = mock_response
+
+        service = GeminiLLMService(api_key="test-gemini-key")
+        with self.assertRaises(LLMGenerationError) as ctx:
+            service.generate("Hello")
+        self.assertIn("Invalid response structure", str(ctx.exception))
+
+    @patch("urllib.request.urlopen")
+    def test_gemini_service_empty_text_part_raises(self, mock_urlopen):
+        mock_response = MagicMock()
+        response_body = {"candidates": [{"content": {"parts": [{"text": ""}]}}]}
+        mock_response.read.return_value = json.dumps(response_body).encode("utf-8")
+        mock_response.__enter__.return_value = mock_response
+        mock_urlopen.return_value = mock_response
+
+        service = GeminiLLMService(api_key="test-gemini-key")
+        with self.assertRaises(LLMGenerationError) as ctx:
+            service.generate("Hello")
+        self.assertIn("Empty text response", str(ctx.exception))
+
+    @patch("urllib.request.urlopen")
+    def test_gemini_service_empty_parts_list_raises(self, mock_urlopen):
+        mock_response = MagicMock()
+        response_body = {"candidates": [{"content": {"parts": []}}]}
+        mock_response.read.return_value = json.dumps(response_body).encode("utf-8")
+        mock_response.__enter__.return_value = mock_response
+        mock_urlopen.return_value = mock_response
+
+        service = GeminiLLMService(api_key="test-gemini-key")
+        with self.assertRaises(LLMGenerationError) as ctx:
+            service.generate("Hello")
+        self.assertIn("Empty text response", str(ctx.exception))
 
     @patch("urllib.request.urlopen")
     def test_gemini_service_empty_candidates_raises(self, mock_urlopen):

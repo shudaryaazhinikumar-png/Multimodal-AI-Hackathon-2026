@@ -157,10 +157,10 @@ class GeminiLLMService(BaseLLMService):
 
                 if code in (401, 403):
                     logger.error("Gemini authentication failed (HTTP %s).", code)
-                    raise LLMAuthError(f"Gemini authentication failed with status {code}.") from e
+                    raise LLMAuthError(f"Gemini authentication failed with status {code}.") from None
                 elif code in (400, 404):
                     logger.error("Gemini invalid request (HTTP %s).", code)
-                    raise LLMInvalidRequestError(f"Gemini API request invalid (HTTP {code}).") from e
+                    raise LLMInvalidRequestError(f"Gemini API request invalid (HTTP {code}).") from None
                 elif code == 429:
                     last_error = LLMRateLimitError(f"Gemini rate limit exceeded (HTTP 429).")
                 elif code == 503:
@@ -169,7 +169,7 @@ class GeminiLLMService(BaseLLMService):
                     last_error = LLMTransientError(f"Gemini transient server error (HTTP {code}).")
                 else:
                     logger.error("Gemini request failed with HTTP %s.", code)
-                    raise LLMGenerationError(f"Gemini API request failed with status {code}.") from e
+                    raise LLMGenerationError(f"Gemini API request failed with status {code}.") from None
 
                 if attempt < self.max_retries and code in self.TRANSIENT_STATUS_CODES:
                     backoff = self.initial_backoff * (2 ** (attempt - 1))
@@ -183,11 +183,11 @@ class GeminiLLMService(BaseLLMService):
                     self.sleep_func(backoff)
                 else:
                     logger.error("Gemini request failed after %d attempt(s) with HTTP %s.", attempt, code)
-                    raise last_error from e
+                    raise last_error from None
 
             except (KeyError, IndexError, json.JSONDecodeError) as e:
                 logger.error("Failed to parse Gemini response: %s", type(e).__name__)
-                raise LLMGenerationError("Invalid response structure from Gemini API.") from e
+                raise LLMGenerationError("Invalid response structure from Gemini API.") from None
             except (LLMConfigError, LLMAuthError, LLMInvalidRequestError, LLMGenerationError):
                 raise
             except Exception as e:
@@ -197,10 +197,10 @@ class GeminiLLMService(BaseLLMService):
                     backoff = self.initial_backoff * (2 ** (attempt - 1))
                     self.sleep_func(backoff)
                 else:
-                    raise last_error from e
+                    raise last_error from None
 
         if last_error:
-            raise last_error
+            raise last_error from None
         raise LLMGenerationError("Gemini generation failed after retries.")
 
 
@@ -292,10 +292,10 @@ class OpenAILLMService(BaseLLMService):
 
                 if code in (401, 403):
                     logger.error("OpenAI authentication failed (HTTP %s).", code)
-                    raise LLMAuthError(f"OpenAI authentication failed with status {code}.") from e
+                    raise LLMAuthError(f"OpenAI authentication failed with status {code}.") from None
                 elif code in (400, 404):
                     logger.error("OpenAI invalid request (HTTP %s).", code)
-                    raise LLMInvalidRequestError(f"OpenAI API request invalid (HTTP {code}).") from e
+                    raise LLMInvalidRequestError(f"OpenAI API request invalid (HTTP {code}).") from None
                 elif code == 429:
                     last_error = LLMRateLimitError(f"OpenAI rate limit exceeded (HTTP 429).")
                 elif code == 503:
@@ -304,7 +304,7 @@ class OpenAILLMService(BaseLLMService):
                     last_error = LLMTransientError(f"OpenAI transient server error (HTTP {code}).")
                 else:
                     logger.error("OpenAI request failed with HTTP %s.", code)
-                    raise LLMGenerationError(f"OpenAI API request failed with status {code}.") from e
+                    raise LLMGenerationError(f"OpenAI API request failed with status {code}.") from None
 
                 if attempt < self.max_retries and code in self.TRANSIENT_STATUS_CODES:
                     backoff = self.initial_backoff * (2 ** (attempt - 1))
@@ -318,11 +318,11 @@ class OpenAILLMService(BaseLLMService):
                     self.sleep_func(backoff)
                 else:
                     logger.error("OpenAI request failed after %d attempt(s) with HTTP %s.", attempt, code)
-                    raise last_error from e
+                    raise last_error from None
 
             except (KeyError, IndexError, json.JSONDecodeError) as e:
                 logger.error("Failed to parse OpenAI response: %s", type(e).__name__)
-                raise LLMGenerationError("Invalid response structure from OpenAI API.") from e
+                raise LLMGenerationError("Invalid response structure from OpenAI API.") from None
             except (LLMConfigError, LLMAuthError, LLMInvalidRequestError, LLMGenerationError):
                 raise
             except Exception as e:
@@ -332,10 +332,10 @@ class OpenAILLMService(BaseLLMService):
                     backoff = self.initial_backoff * (2 ** (attempt - 1))
                     self.sleep_func(backoff)
                 else:
-                    raise last_error from e
+                    raise last_error from None
 
         if last_error:
-            raise last_error
+            raise last_error from None
         raise LLMGenerationError("OpenAI generation failed after retries.")
 
 

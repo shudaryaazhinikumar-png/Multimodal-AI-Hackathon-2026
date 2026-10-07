@@ -128,10 +128,10 @@ def generate_tutor_response(
         answer = service.generate(prompt=prompt, system_prompt=TUTOR_SYSTEM_PROMPT)
     except LLMError as e:
         logger.exception("LLM generation error for user %s: %s", user_id, e)
-        raise TutorGenerationError("Failed to generate tutor answer.") from e
+        raise TutorGenerationError("Failed to generate tutor answer.") from None
     except Exception as e:
         logger.exception("Unexpected LLM error for user %s: %s", user_id, e)
-        raise TutorGenerationError("Failed to generate tutor answer.") from e
+        raise TutorGenerationError("Failed to generate tutor answer.") from None
 
     if not answer or not answer.strip():
         raise TutorGenerationError("LLM returned empty answer.")
