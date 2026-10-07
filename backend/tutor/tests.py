@@ -765,6 +765,7 @@ class TutorRealEndToEndIntegrationTestCase(APITestCase):
 
     def setUp(self):
         import tempfile
+        from knowledge.vectorstore import get_vectorstore
         self.user1 = User.objects.create_user(
             username="student_e2e_1",
             email="student1@example.com",
@@ -780,8 +781,11 @@ class TutorRealEndToEndIntegrationTestCase(APITestCase):
         self.token2 = Token.objects.create(user=self.user2)
 
         self.temp_dir = tempfile.TemporaryDirectory()
+        self.vectorstore = get_vectorstore(persist_dir=self.temp_dir.name)
 
     def tearDown(self):
+        from knowledge.vectorstore import get_vectorstore
+        get_vectorstore(persist_dir=None)
         self.temp_dir.cleanup()
 
     def test_end_to_end_tutor_chat_and_user_isolation(self):
