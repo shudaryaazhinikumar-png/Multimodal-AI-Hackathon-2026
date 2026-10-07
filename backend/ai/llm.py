@@ -56,7 +56,11 @@ class GeminiLLMService(BaseLLMService):
         timeout: int = 30,
     ):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("AI_API_KEY")
-        self.model = model or os.getenv("AI_MODEL") or getattr(settings, "AI_MODEL", "gemini-2.5-flash")
+        self.model = (
+            model
+            or os.getenv("AI_MODEL")
+            or getattr(settings, "AI_MODEL", "gemini-3.8-flash")
+        )
         self.timeout = timeout
 
     def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:

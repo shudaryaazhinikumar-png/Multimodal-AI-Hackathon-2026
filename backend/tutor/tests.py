@@ -331,9 +331,19 @@ class AIModuleUnitTests(APITestCase):
         mock_response.__enter__.return_value = mock_response
         mock_urlopen.return_value = mock_response
 
-        service = GeminiLLMService(api_key="test-gemini-key", model="gemini-2.5-flash")
+        service = GeminiLLMService(api_key="test-gemini-key", model="gemini-3.8-flash")
         result = service.generate("Explain entropy", system_prompt="Be concise")
         self.assertEqual(result, "Gemini generated explanation.")
+
+    def test_gemini_service_default_model(self):
+        with patch.dict("os.environ", {}, clear=True):
+            service = GeminiLLMService(api_key="test-key")
+            self.assertEqual(service.model, "gemini-3.8-flash")
+
+    def test_gemini_service_respects_env_model(self):
+        with patch.dict("os.environ", {"AI_MODEL": "gemini-3.8-flash"}, clear=True):
+            service = GeminiLLMService(api_key="test-key")
+            self.assertEqual(service.model, "gemini-3.8-flash")
 
     @patch("urllib.request.urlopen")
     def test_gemini_service_generate_http_error(self, mock_urlopen):
