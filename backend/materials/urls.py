@@ -8,8 +8,8 @@ urlpatterns = [
     path("upload", views.material_upload, name="material-upload"),
     path(
         "<int:material_id>",
-        views.material_delete,
-        name="material-delete",
+        views.material_detail,
+        name="material-detail",
     ),
     path(
         "<int:material_id>/reprocess",
