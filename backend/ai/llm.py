@@ -1,15 +1,17 @@
 """
 Configurable LLM provider abstraction for the AI Study Companion.
-Supports Google Gemini, OpenAI, Groq, and OpenAI-compatible providers.
+Supports Google Gemini, OpenAI, Groq, and OpenAI-compatible providers
+with transient retry, exponential backoff, and robust error classification.
 """
 
 import json
 import logging
 import os
+import time
 import urllib.error
 import urllib.request
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Set
 
 from django.conf import settings
 
@@ -26,8 +28,33 @@ class LLMConfigError(LLMError):
     pass
 
 
+class LLMAuthError(LLMConfigError):
+    """Raised when authentication with the LLM provider fails (HTTP 401/403)."""
+    pass
+
+
 class LLMGenerationError(LLMError):
-    """Raised when text generation from the LLM provider fails."""
+    """Base exception for text generation failures from the LLM provider."""
+    pass
+
+
+class LLMTransientError(LLMGenerationError):
+    """Raised for transient provider errors that may succeed upon retry (HTTP 429, 503, 500, etc.)."""
+    pass
+
+
+class LLMRateLimitError(LLMTransientError):
+    """Raised when the LLM provider rate limit / quota is exceeded (HTTP 429)."""
+    pass
+
+
+class LLMUnavailableError(LLMTransientError):
+    """Raised when the LLM provider is temporarily overloaded or unavailable (HTTP 503)."""
+    pass
+
+
+class LLMInvalidRequestError(LLMGenerationError):
+    """Raised for client-side request errors such as 400 Bad Request or 404 Model Not Found."""
     pass
 
 
@@ -46,14 +73,19 @@ class BaseLLMService(ABC):
 
 class GeminiLLMService(BaseLLMService):
     """
-    Google Gemini REST API implementation.
+    Google Gemini REST API implementation with transient retry and exponential backoff.
     """
+
+    TRANSIENT_STATUS_CODES: Set[int] = {429, 500, 502, 503, 504}
 
     def __init__(
         self,
         api_key: Optional[str] = None,
         model: Optional[str] = None,
         timeout: int = 30,
+        max_retries: int = 3,
+        initial_backoff: float = 1.0,
+        sleep_func: Callable[[float], None] = time.sleep,
     ):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("AI_API_KEY")
         self.model = (
@@ -62,6 +94,9 @@ class GeminiLLMService(BaseLLMService):
             or getattr(settings, "AI_MODEL", "gemini-3.8-flash")
         )
         self.timeout = timeout
+        self.max_retries = max(1, max_retries)
+        self.initial_backoff = initial_backoff
+        self.sleep_func = sleep_func
 
     def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
         if not self.api_key:
@@ -95,36 +130,87 @@ class GeminiLLMService(BaseLLMService):
             method="POST",
         )
 
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as response:
-                resp_data = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            error_body = ""
-            try:
-                error_body = e.read().decode("utf-8")
-            except Exception:
-                pass
-            logger.error("Gemini HTTP Error %s: %s", e.code, error_body)
-            raise LLMGenerationError(f"Gemini API request failed with status {e.code}.") from e
-        except Exception as e:
-            logger.error("Gemini connection error: %s", e)
-            raise LLMGenerationError("Failed to communicate with Gemini API.") from e
+        last_error: Optional[Exception] = None
 
-        try:
-            candidates = resp_data.get("candidates", [])
-            if not candidates:
-                raise LLMGenerationError("No candidates returned from Gemini.")
-            text = candidates[0]["content"]["parts"][0]["text"]
-            return text
-        except (KeyError, IndexError) as e:
-            logger.error("Failed to parse Gemini response structure: %s", resp_data)
-            raise LLMGenerationError("Invalid response structure from Gemini API.") from e
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout) as response:
+                    resp_data = json.loads(response.read().decode("utf-8"))
+
+                candidates = resp_data.get("candidates", [])
+                if not candidates:
+                    raise LLMGenerationError("No candidates returned from Gemini.")
+
+                parts = candidates[0].get("content", {}).get("parts", [])
+                if not parts or not parts[0].get("text"):
+                    raise LLMGenerationError("Empty text response returned from Gemini.")
+
+                return parts[0]["text"]
+
+            except urllib.error.HTTPError as e:
+                code = e.code
+                error_body = ""
+                try:
+                    error_body = e.read().decode("utf-8")
+                except Exception:
+                    pass
+
+                if code in (401, 403):
+                    logger.error("Gemini authentication failed (HTTP %s).", code)
+                    raise LLMAuthError(f"Gemini authentication failed with status {code}.") from e
+                elif code in (400, 404):
+                    logger.error("Gemini invalid request (HTTP %s).", code)
+                    raise LLMInvalidRequestError(f"Gemini API request invalid (HTTP {code}).") from e
+                elif code == 429:
+                    last_error = LLMRateLimitError(f"Gemini rate limit exceeded (HTTP 429).")
+                elif code == 503:
+                    last_error = LLMUnavailableError(f"Gemini service temporarily unavailable (HTTP 503).")
+                elif code in self.TRANSIENT_STATUS_CODES:
+                    last_error = LLMTransientError(f"Gemini transient server error (HTTP {code}).")
+                else:
+                    logger.error("Gemini request failed with HTTP %s.", code)
+                    raise LLMGenerationError(f"Gemini API request failed with status {code}.") from e
+
+                if attempt < self.max_retries and code in self.TRANSIENT_STATUS_CODES:
+                    backoff = self.initial_backoff * (2 ** (attempt - 1))
+                    logger.warning(
+                        "Gemini request failed with HTTP %s; retrying (attempt %d/%d) in %.1fs...",
+                        code,
+                        attempt,
+                        self.max_retries,
+                        backoff,
+                    )
+                    self.sleep_func(backoff)
+                else:
+                    logger.error("Gemini request failed after %d attempt(s) with HTTP %s.", attempt, code)
+                    raise last_error from e
+
+            except (KeyError, IndexError, json.JSONDecodeError) as e:
+                logger.error("Failed to parse Gemini response: %s", type(e).__name__)
+                raise LLMGenerationError("Invalid response structure from Gemini API.") from e
+            except (LLMConfigError, LLMAuthError, LLMInvalidRequestError, LLMGenerationError):
+                raise
+            except Exception as e:
+                logger.error("Gemini connection error on attempt %d/%d: %s", attempt, self.max_retries, type(e).__name__)
+                last_error = LLMGenerationError(f"Failed to communicate with Gemini API: {type(e).__name__}")
+                if attempt < self.max_retries:
+                    backoff = self.initial_backoff * (2 ** (attempt - 1))
+                    self.sleep_func(backoff)
+                else:
+                    raise last_error from e
+
+        if last_error:
+            raise last_error
+        raise LLMGenerationError("Gemini generation failed after retries.")
 
 
 class OpenAILLMService(BaseLLMService):
     """
-    OpenAI-compatible REST API implementation (works with OpenAI, Groq, OpenRouter, etc.).
+    OpenAI-compatible REST API implementation (works with OpenAI, Groq, OpenRouter, etc.)
+    with transient retry and exponential backoff.
     """
+
+    TRANSIENT_STATUS_CODES: Set[int] = {429, 500, 502, 503, 504}
 
     def __init__(
         self,
@@ -132,6 +218,9 @@ class OpenAILLMService(BaseLLMService):
         model: Optional[str] = None,
         base_url: Optional[str] = None,
         timeout: int = 30,
+        max_retries: int = 3,
+        initial_backoff: float = 1.0,
+        sleep_func: Callable[[float], None] = time.sleep,
     ):
         self.api_key = (
             api_key
@@ -146,6 +235,9 @@ class OpenAILLMService(BaseLLMService):
             or getattr(settings, "AI_BASE_URL", "https://api.openai.com/v1")
         ).rstrip("/")
         self.timeout = timeout
+        self.max_retries = max(1, max_retries)
+        self.initial_backoff = initial_backoff
+        self.sleep_func = sleep_func
 
     def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
         if not self.api_key:
@@ -175,30 +267,76 @@ class OpenAILLMService(BaseLLMService):
             method="POST",
         )
 
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as response:
-                resp_data = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            error_body = ""
-            try:
-                error_body = e.read().decode("utf-8")
-            except Exception:
-                pass
-            logger.error("OpenAI HTTP Error %s: %s", e.code, error_body)
-            raise LLMGenerationError(f"OpenAI API request failed with status {e.code}.") from e
-        except Exception as e:
-            logger.error("OpenAI connection error: %s", e)
-            raise LLMGenerationError("Failed to communicate with OpenAI API.") from e
+        last_error: Optional[Exception] = None
 
-        try:
-            choices = resp_data.get("choices", [])
-            if not choices:
-                raise LLMGenerationError("No choices returned from OpenAI.")
-            text = choices[0]["message"]["content"]
-            return text
-        except (KeyError, IndexError) as e:
-            logger.error("Failed to parse OpenAI response structure: %s", resp_data)
-            raise LLMGenerationError("Invalid response structure from OpenAI API.") from e
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout) as response:
+                    resp_data = json.loads(response.read().decode("utf-8"))
+
+                choices = resp_data.get("choices", [])
+                if not choices:
+                    raise LLMGenerationError("No choices returned from OpenAI.")
+                content = choices[0].get("message", {}).get("content")
+                if not content:
+                    raise LLMGenerationError("Empty text response returned from OpenAI.")
+                return content
+
+            except urllib.error.HTTPError as e:
+                code = e.code
+                error_body = ""
+                try:
+                    error_body = e.read().decode("utf-8")
+                except Exception:
+                    pass
+
+                if code in (401, 403):
+                    logger.error("OpenAI authentication failed (HTTP %s).", code)
+                    raise LLMAuthError(f"OpenAI authentication failed with status {code}.") from e
+                elif code in (400, 404):
+                    logger.error("OpenAI invalid request (HTTP %s).", code)
+                    raise LLMInvalidRequestError(f"OpenAI API request invalid (HTTP {code}).") from e
+                elif code == 429:
+                    last_error = LLMRateLimitError(f"OpenAI rate limit exceeded (HTTP 429).")
+                elif code == 503:
+                    last_error = LLMUnavailableError(f"OpenAI service temporarily unavailable (HTTP 503).")
+                elif code in self.TRANSIENT_STATUS_CODES:
+                    last_error = LLMTransientError(f"OpenAI transient server error (HTTP {code}).")
+                else:
+                    logger.error("OpenAI request failed with HTTP %s.", code)
+                    raise LLMGenerationError(f"OpenAI API request failed with status {code}.") from e
+
+                if attempt < self.max_retries and code in self.TRANSIENT_STATUS_CODES:
+                    backoff = self.initial_backoff * (2 ** (attempt - 1))
+                    logger.warning(
+                        "OpenAI request failed with HTTP %s; retrying (attempt %d/%d) in %.1fs...",
+                        code,
+                        attempt,
+                        self.max_retries,
+                        backoff,
+                    )
+                    self.sleep_func(backoff)
+                else:
+                    logger.error("OpenAI request failed after %d attempt(s) with HTTP %s.", attempt, code)
+                    raise last_error from e
+
+            except (KeyError, IndexError, json.JSONDecodeError) as e:
+                logger.error("Failed to parse OpenAI response: %s", type(e).__name__)
+                raise LLMGenerationError("Invalid response structure from OpenAI API.") from e
+            except (LLMConfigError, LLMAuthError, LLMInvalidRequestError, LLMGenerationError):
+                raise
+            except Exception as e:
+                logger.error("OpenAI connection error on attempt %d/%d: %s", attempt, self.max_retries, type(e).__name__)
+                last_error = LLMGenerationError(f"Failed to communicate with OpenAI API: {type(e).__name__}")
+                if attempt < self.max_retries:
+                    backoff = self.initial_backoff * (2 ** (attempt - 1))
+                    self.sleep_func(backoff)
+                else:
+                    raise last_error from e
+
+        if last_error:
+            raise last_error
+        raise LLMGenerationError("OpenAI generation failed after retries.")
 
 
 class UnconfiguredLLMService(BaseLLMService):
@@ -247,4 +385,3 @@ def get_llm_service() -> BaseLLMService:
     else:
         logger.warning("Unrecognized AI_PROVIDER '%s', defaulting to unconfigured.", provider)
         return UnconfiguredLLMService()
-

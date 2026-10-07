@@ -5,9 +5,14 @@ AI module for LLM generation and Tutor service.
 from .llm import (
     BaseLLMService,
     GeminiLLMService,
+    LLMAuthError,
     LLMConfigError,
     LLMError,
     LLMGenerationError,
+    LLMInvalidRequestError,
+    LLMRateLimitError,
+    LLMTransientError,
+    LLMUnavailableError,
     OpenAILLMService,
     get_llm_service,
 )
@@ -28,7 +33,12 @@ __all__ = [
     "OpenAILLMService",
     "LLMError",
     "LLMConfigError",
+    "LLMAuthError",
     "LLMGenerationError",
+    "LLMTransientError",
+    "LLMRateLimitError",
+    "LLMUnavailableError",
+    "LLMInvalidRequestError",
     "get_llm_service",
     "TUTOR_SYSTEM_PROMPT",
     "build_tutor_prompt",
@@ -40,4 +50,3 @@ __all__ = [
     "to_chat_sources",
     "format_context_from_sources",
 ]
-

@@ -11,8 +11,13 @@ from rest_framework.test import APITestCase
 
 from ai.llm import (
     GeminiLLMService,
+    LLMAuthError,
     LLMConfigError,
     LLMGenerationError,
+    LLMInvalidRequestError,
+    LLMRateLimitError,
+    LLMTransientError,
+    LLMUnavailableError,
     OpenAILLMService,
     UnconfiguredLLMService,
     get_llm_service,
@@ -356,10 +361,131 @@ class AIModuleUnitTests(APITestCase):
             fp=error_file,
         )
 
+        mock_sleep = MagicMock()
+        service = GeminiLLMService(api_key="test-gemini-key", max_retries=2, sleep_func=mock_sleep)
+        with self.assertRaises(LLMRateLimitError) as ctx:
+            service.generate("Explain entropy")
+        self.assertIn("HTTP 429", str(ctx.exception))
+        self.assertEqual(mock_sleep.call_count, 1)
+
+    @patch("urllib.request.urlopen")
+    def test_gemini_service_retry_503_success(self, mock_urlopen):
+        # 1st call raises 503, 2nd call succeeds
+        err_file = io.BytesIO(b'{"error": {"message": "Service unavailable"}}')
+        http_err = urllib.error.HTTPError(
+            url="https://generativelanguage.googleapis.com",
+            code=503,
+            msg="Service Unavailable",
+            hdrs={},
+            fp=err_file,
+        )
+        mock_success = MagicMock()
+        resp_data = {"candidates": [{"content": {"parts": [{"text": "Recovered after 503."}]}}]}
+        mock_success.read.return_value = json.dumps(resp_data).encode("utf-8")
+        mock_success.__enter__.return_value = mock_success
+
+        mock_urlopen.side_effect = [http_err, mock_success]
+
+        mock_sleep = MagicMock()
+        service = GeminiLLMService(api_key="test-gemini-key", max_retries=3, sleep_func=mock_sleep)
+        result = service.generate("Explain retry")
+        self.assertEqual(result, "Recovered after 503.")
+        self.assertEqual(mock_urlopen.call_count, 2)
+        self.assertEqual(mock_sleep.call_count, 1)
+
+    @patch("urllib.request.urlopen")
+    def test_gemini_service_retry_429_success(self, mock_urlopen):
+        # 1st call raises 429, 2nd call succeeds
+        err_file = io.BytesIO(b'{"error": {"message": "Rate limit"}}')
+        http_err = urllib.error.HTTPError(
+            url="https://generativelanguage.googleapis.com",
+            code=429,
+            msg="Rate limit",
+            hdrs={},
+            fp=err_file,
+        )
+        mock_success = MagicMock()
+        resp_data = {"candidates": [{"content": {"parts": [{"text": "Recovered after 429."}]}}]}
+        mock_success.read.return_value = json.dumps(resp_data).encode("utf-8")
+        mock_success.__enter__.return_value = mock_success
+
+        mock_urlopen.side_effect = [http_err, mock_success]
+
+        mock_sleep = MagicMock()
+        service = GeminiLLMService(api_key="test-gemini-key", max_retries=3, sleep_func=mock_sleep)
+        result = service.generate("Explain rate limit")
+        self.assertEqual(result, "Recovered after 429.")
+        self.assertEqual(mock_urlopen.call_count, 2)
+        self.assertEqual(mock_sleep.call_count, 1)
+
+    @patch("urllib.request.urlopen")
+    def test_gemini_service_400_fails_immediately_without_retry(self, mock_urlopen):
+        err_file = io.BytesIO(b'{"error": {"message": "Bad request"}}')
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            url="https://generativelanguage.googleapis.com",
+            code=400,
+            msg="Bad Request",
+            hdrs={},
+            fp=err_file,
+        )
+
+        from ai.llm import LLMInvalidRequestError
+        mock_sleep = MagicMock()
+        service = GeminiLLMService(api_key="test-gemini-key", max_retries=3, sleep_func=mock_sleep)
+        with self.assertRaises(LLMInvalidRequestError):
+            service.generate("Invalid prompt")
+        self.assertEqual(mock_urlopen.call_count, 1)
+        self.assertEqual(mock_sleep.call_count, 0)
+
+    @patch("urllib.request.urlopen")
+    def test_gemini_service_401_fails_immediately_without_retry(self, mock_urlopen):
+        err_file = io.BytesIO(b'{"error": {"message": "Invalid API key"}}')
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            url="https://generativelanguage.googleapis.com",
+            code=401,
+            msg="Unauthorized",
+            hdrs={},
+            fp=err_file,
+        )
+
+        from ai.llm import LLMAuthError
+        mock_sleep = MagicMock()
+        service = GeminiLLMService(api_key="test-gemini-key", max_retries=3, sleep_func=mock_sleep)
+        with self.assertRaises(LLMAuthError):
+            service.generate("Unauthorized prompt")
+        self.assertEqual(mock_urlopen.call_count, 1)
+        self.assertEqual(mock_sleep.call_count, 0)
+
+    @patch("urllib.request.urlopen")
+    def test_gemini_service_repeated_503_eventually_raises(self, mock_urlopen):
+        err_file = io.BytesIO(b'{"error": {"message": "Overloaded"}}')
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            url="https://generativelanguage.googleapis.com",
+            code=503,
+            msg="Service Unavailable",
+            hdrs={},
+            fp=err_file,
+        )
+
+        from ai.llm import LLMUnavailableError
+        mock_sleep = MagicMock()
+        service = GeminiLLMService(api_key="test-gemini-key", max_retries=3, sleep_func=mock_sleep)
+        with self.assertRaises(LLMUnavailableError):
+            service.generate("Overloaded prompt")
+        self.assertEqual(mock_urlopen.call_count, 3)
+        self.assertEqual(mock_sleep.call_count, 2)
+
+    @patch("urllib.request.urlopen")
+    def test_gemini_service_empty_candidates_raises(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps({"candidates": []}).encode("utf-8")
+        mock_response.__enter__.return_value = mock_response
+        mock_urlopen.return_value = mock_response
+
         service = GeminiLLMService(api_key="test-gemini-key")
         with self.assertRaises(LLMGenerationError) as ctx:
-            service.generate("Explain entropy")
-        self.assertIn("status 429", str(ctx.exception))
+            service.generate("Hello")
+        self.assertIn("No candidates", str(ctx.exception))
 
     @patch("urllib.request.urlopen")
     def test_openai_service_generate_success(self, mock_urlopen):
@@ -392,8 +518,9 @@ class AIModuleUnitTests(APITestCase):
             fp=error_file,
         )
 
+        from ai.llm import LLMAuthError
         service = OpenAILLMService(api_key="invalid-key")
-        with self.assertRaises(LLMGenerationError) as ctx:
+        with self.assertRaises(LLMAuthError) as ctx:
             service.generate("Explain gravity")
         self.assertIn("status 401", str(ctx.exception))
 
