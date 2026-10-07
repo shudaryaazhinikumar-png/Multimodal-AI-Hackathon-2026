@@ -11,56 +11,27 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from accounts.authentication import BearerOrTokenAuthentication
-from knowledge.embeddings import get_embedding_service
-from knowledge.vectorstore import get_vectorstore
+from ai.tutor_service import (
+    TutorGenerationError,
+    TutorNoMaterialError,
+    TutorRetrievalError,
+    generate_tutor_response,
+)
 from .models import TutorMessage
 from .serializers import TutorChatRequestSerializer, TutorMessageSerializer
 
 logger = logging.getLogger(__name__)
 
 
-def _to_chat_sources(results):
-    sources = []
-    for result in results:
-        source_type = result.get("sourceType", "other")
-        if source_type not in {"pdf", "ppt", "video", "other"}:
-            source_type = "other"
-
-        source = {
-            "id": str(result["id"]),
-            "title": result.get("sourceName") or result.get("title") or "Study material",
-            "type": source_type,
-            "snippet": result["text"],
-        }
-        for field in ("page", "slide", "timestamp", "relevance", "materialId", "documentId", "chunkIndex"):
-            value = result.get(field)
-            if value is not None:
-                source[field] = value
-        sources.append(source)
-    return sources
-
-
-def _retrieval_only_answer(sources):
-    excerpts = []
-    for source in sources:
-        location = ""
-        if source.get("page") is not None:
-            location = f" — page {source['page']}"
-        elif source.get("slide") is not None:
-            location = f" — slide {source['slide']}"
-        excerpts.append(f"**{source['title']}{location}**\n\n{source['snippet']}")
-
-    return (
-        "Answer generation is not configured. These are the passages retrieved "
-        "from your materials; they are source excerpts, not a generated explanation:\n\n"
-        + "\n\n".join(excerpts)
-    )
-
-
 @api_view(["POST"])
 @authentication_classes([BearerOrTokenAuthentication])
 @permission_classes([IsAuthenticated])
 def tutor_chat(request):
+    """
+    POST /api/tutor/chat
+    Receives a student question, performs semantic search over the student's study materials,
+    generates a grounded tutor explanation using LLM, and persists chat history.
+    """
     serializer = TutorChatRequestSerializer(data=request.data)
     if not serializer.is_valid():
         return Response(
@@ -75,13 +46,19 @@ def tutor_chat(request):
     content = serializer.validated_data["content"]
 
     try:
-        query_embedding = get_embedding_service().embed_query(content)
-        results = get_vectorstore().search(
+        response_data = generate_tutor_response(
             user_id=request.user.id,
-            query_embedding=query_embedding,
-            n_results=5,
+            question=content,
         )
-    except Exception:
+    except TutorNoMaterialError:
+        return Response(
+            {
+                "code": "no_relevant_material",
+                "error": "No relevant study material was found. Upload or process materials, then try again.",
+            },
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    except TutorRetrievalError:
         logger.exception("Tutor retrieval failed for authenticated user %s", request.user.id)
         return Response(
             {
@@ -90,27 +67,28 @@ def tutor_chat(request):
             },
             status=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
-
-    if not results:
+    except TutorGenerationError:
+        logger.exception("Tutor LLM generation failed for authenticated user %s", request.user.id)
         return Response(
             {
-                "code": "no_relevant_material",
-                "error": "No relevant study material was found. Upload or process materials, then try again.",
+                "code": "generation_unavailable",
+                "error": "AI tutor answer generation is temporarily unavailable. Please try again.",
             },
-            status=status.HTTP_404_NOT_FOUND,
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
-
-    sources = _to_chat_sources(results)
-    if not sources:
+    except Exception:
+        logger.exception("Unexpected error in tutor_chat for authenticated user %s", request.user.id)
         return Response(
             {
-                "code": "no_relevant_material",
-                "error": "No relevant study material was found. Upload or process materials, then try again.",
+                "code": "generation_unavailable",
+                "error": "AI tutor answer generation is temporarily unavailable. Please try again.",
             },
-            status=status.HTTP_404_NOT_FOUND,
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
 
-    answer = _retrieval_only_answer(sources)
+    answer = response_data["answer"]
+    sources = response_data["sources"]
+
     with transaction.atomic():
         TutorMessage.objects.create(
             user=request.user,
@@ -134,8 +112,13 @@ def tutor_chat(request):
 @authentication_classes([BearerOrTokenAuthentication])
 @permission_classes([IsAuthenticated])
 def tutor_history(request):
+    """
+    GET /api/tutor/history
+    Returns the chronological conversation history for the authenticated student.
+    """
     messages = TutorMessage.objects.filter(user=request.user).order_by("created_at", "id")
     return Response(
         TutorMessageSerializer(messages, many=True).data,
         status=status.HTTP_200_OK,
     )
+
