@@ -350,13 +350,80 @@ class UnconfiguredLLMService(BaseLLMService):
         )
 
 
+class FallbackLLMService(BaseLLMService):
+    """
+    Service wrapper that delegates to a primary LLM provider and automatically
+    falls back to a secondary provider on transient availability/rate-limit errors.
+    """
+
+    def __init__(
+        self,
+        primary: BaseLLMService,
+        fallback: Optional[BaseLLMService] = None,
+    ):
+        self.primary = primary
+        self.fallback = fallback
+
+    def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
+        if not self.fallback:
+            return self.primary.generate(prompt=prompt, system_prompt=system_prompt)
+
+        try:
+            return self.primary.generate(prompt=prompt, system_prompt=system_prompt)
+        except (LLMAuthError, LLMInvalidRequestError, LLMConfigError):
+            # Permanent configuration or client errors must fail immediately without fallback
+            raise
+        except (LLMUnavailableError, LLMRateLimitError, LLMTransientError) as e:
+            logger.warning(
+                "Primary LLM provider (%s) encountered transient failure: %s. Falling back to secondary provider (%s)...",
+                type(self.primary).__name__,
+                type(e).__name__,
+                type(self.fallback).__name__,
+            )
+            try:
+                return self.fallback.generate(prompt=prompt, system_prompt=system_prompt)
+            except Exception as fb_err:
+                logger.error(
+                    "Fallback LLM provider (%s) also failed: %s",
+                    type(self.fallback).__name__,
+                    type(fb_err).__name__,
+                )
+                raise
+
+
+def _instantiate_provider(
+    provider: str,
+    *,
+    model: Optional[str] = None,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+) -> BaseLLMService:
+    provider = provider.lower().strip()
+    if provider in ("gemini", "google"):
+        return GeminiLLMService(api_key=api_key, model=model)
+    elif provider in ("openai", "chatgpt"):
+        return OpenAILLMService(api_key=api_key, model=model, base_url=base_url)
+    elif provider == "groq":
+        return OpenAILLMService(
+            api_key=api_key or os.getenv("GROQ_API_KEY") or os.getenv("AI_FALLBACK_API_KEY"),
+            base_url=base_url or os.getenv("AI_FALLBACK_BASE_URL", "https://api.groq.com/openai/v1"),
+            model=model or os.getenv("AI_FALLBACK_MODEL", "llama-3.3-70b-versatile"),
+        )
+    elif provider in ("generic_openai", "custom"):
+        return OpenAILLMService(api_key=api_key, model=model, base_url=base_url)
+    else:
+        logger.warning("Unrecognized LLM provider '%s', defaulting to unconfigured.", provider)
+        return UnconfiguredLLMService()
+
+
 def get_llm_service() -> BaseLLMService:
     """
-    Factory function returning the configured LLM service instance.
+    Factory function returning the configured LLM service instance,
+    with optional fallback provider wrapping if AI_FALLBACK_PROVIDER is configured.
     """
     provider = os.getenv("AI_PROVIDER") or getattr(settings, "AI_PROVIDER", None)
 
-    # Auto-detect provider if not explicitly specified
+    # Auto-detect primary provider if not explicitly specified
     if not provider:
         if os.getenv("GEMINI_API_KEY"):
             provider = "gemini"
@@ -369,19 +436,21 @@ def get_llm_service() -> BaseLLMService:
         else:
             return UnconfiguredLLMService()
 
-    provider = provider.lower().strip()
+    primary_service = _instantiate_provider(
+        provider,
+        model=os.getenv("AI_MODEL") or getattr(settings, "AI_MODEL", None),
+        api_key=os.getenv("GEMINI_API_KEY") or os.getenv("OPENAI_API_KEY") or os.getenv("AI_API_KEY"),
+        base_url=os.getenv("AI_BASE_URL") or getattr(settings, "AI_BASE_URL", None),
+    )
 
-    if provider in ("gemini", "google"):
-        return GeminiLLMService()
-    elif provider in ("openai", "chatgpt"):
-        return OpenAILLMService()
-    elif provider == "groq":
-        return OpenAILLMService(
-            base_url=os.getenv("AI_BASE_URL", "https://api.groq.com/openai/v1"),
-            model=os.getenv("AI_MODEL", "llama-3.3-70b-versatile"),
+    fallback_provider = os.getenv("AI_FALLBACK_PROVIDER") or getattr(settings, "AI_FALLBACK_PROVIDER", None)
+    if fallback_provider:
+        fallback_service = _instantiate_provider(
+            fallback_provider,
+            model=os.getenv("AI_FALLBACK_MODEL") or getattr(settings, "AI_FALLBACK_MODEL", None),
+            api_key=os.getenv("AI_FALLBACK_API_KEY") or os.getenv("GROQ_API_KEY") or os.getenv("OPENAI_API_KEY"),
+            base_url=os.getenv("AI_FALLBACK_BASE_URL") or getattr(settings, "AI_FALLBACK_BASE_URL", None),
         )
-    elif provider in ("generic_openai", "custom"):
-        return OpenAILLMService()
-    else:
-        logger.warning("Unrecognized AI_PROVIDER '%s', defaulting to unconfigured.", provider)
-        return UnconfiguredLLMService()
+        return FallbackLLMService(primary=primary_service, fallback=fallback_service)
+
+    return primary_service

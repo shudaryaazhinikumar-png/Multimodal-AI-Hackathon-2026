@@ -4,6 +4,7 @@ AI module for LLM generation and Tutor service.
 
 from .llm import (
     BaseLLMService,
+    FallbackLLMService,
     GeminiLLMService,
     LLMAuthError,
     LLMConfigError,
@@ -29,6 +30,7 @@ from .tutor_service import (
 
 __all__ = [
     "BaseLLMService",
+    "FallbackLLMService",
     "GeminiLLMService",
     "OpenAILLMService",
     "LLMError",

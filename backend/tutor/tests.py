@@ -10,6 +10,7 @@ from rest_framework.authtoken.models import Token
 from rest_framework.test import APITestCase
 
 from ai.llm import (
+    FallbackLLMService,
     GeminiLLMService,
     LLMAuthError,
     LLMConfigError,
@@ -373,6 +374,67 @@ class TutorAPITestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
         self.assertEqual(response.data["code"], "generation_unavailable")
         self.assertEqual(TutorMessage.objects.count(), 0)
+
+    @patch("ai.tutor_service.get_llm_service")
+    @patch("ai.tutor_service.get_vectorstore")
+    @patch("ai.tutor_service.get_embedding_service")
+    def test_chat_fallback_to_groq_succeeds_with_citation_integrity(
+        self,
+        mock_get_embedding_service,
+        mock_get_vectorstore,
+        mock_get_llm_service,
+    ):
+        mock_get_embedding_service.return_value.embed_query.return_value = [0.1, 0.2]
+        mock_get_vectorstore.return_value.search.return_value = [
+            {
+                "id": "chunk-groq-1",
+                "text": "Gradient descent minimizes the objective loss function.",
+                "sourceName": "Optimization Guide",
+                "sourceType": "pdf",
+                "page": 12,
+                "relevance": 0.95,
+                "materialId": 40,
+                "documentId": 15,
+                "chunkIndex": 1,
+            }
+        ]
+
+        primary_gemini = MagicMock()
+        primary_gemini.generate.side_effect = LLMUnavailableError("Gemini service temporarily unavailable (HTTP 503).")
+
+        fallback_groq = MagicMock()
+        fallback_groq.generate.return_value = (
+            "Gradient descent iteratively updates parameters in the direction of the steepest decrease of the loss function, "
+            "as described on page 12 of your Optimization Guide."
+        )
+
+        mock_get_llm_service.return_value = FallbackLLMService(primary=primary_gemini, fallback=fallback_groq)
+
+        self.authenticate()
+        response = self.client.post(
+            self.chat_url,
+            {"content": "How does gradient descent optimize models?"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["role"], "ai")
+        self.assertIn("Gradient descent iteratively updates", response.data["content"])
+        self.assertEqual(len(response.data["sources"]), 1)
+        self.assertEqual(response.data["sources"][0]["id"], "chunk-groq-1")
+        self.assertEqual(response.data["sources"][0]["title"], "Optimization Guide")
+        self.assertEqual(response.data["sources"][0]["page"], 12)
+
+        # Verify fallback was invoked
+        primary_gemini.generate.assert_called_once()
+        fallback_groq.generate.assert_called_once()
+
+        # Verify conversation history was persisted
+        messages = TutorMessage.objects.filter(user=self.user).order_by("created_at")
+        self.assertEqual(messages.count(), 2)
+        self.assertEqual(messages[0].role, "student")
+        self.assertEqual(messages[1].role, "ai")
+        self.assertEqual(messages[1].content, response.data["content"])
 
     def test_history_requires_authentication(self):
         response = self.client.get(self.history_url)
@@ -755,6 +817,100 @@ class AIModuleUnitTests(APITestCase):
         with patch.dict("os.environ", {"GROQ_API_KEY": "dummy-key"}, clear=True):
             service = get_llm_service()
             self.assertIsInstance(service, OpenAILLMService)
+
+    def test_fallback_service_gemini_success_does_not_invoke_fallback(self):
+        primary = MagicMock()
+        primary.generate.return_value = "Gemini answer"
+        fallback = MagicMock()
+
+        service = FallbackLLMService(primary=primary, fallback=fallback)
+        result = service.generate("Explain recursion")
+
+        self.assertEqual(result, "Gemini answer")
+        primary.generate.assert_called_once_with(prompt="Explain recursion", system_prompt=None)
+        fallback.generate.assert_not_called()
+
+    def test_fallback_service_gemini_transient_failure_falls_back_to_groq(self):
+        primary = MagicMock()
+        primary.generate.side_effect = LLMUnavailableError("Gemini HTTP 503")
+        fallback = MagicMock()
+        fallback.generate.return_value = "Groq fallback answer"
+
+        service = FallbackLLMService(primary=primary, fallback=fallback)
+        result = service.generate("Explain recursion", system_prompt="Tutor prompt")
+
+        self.assertEqual(result, "Groq fallback answer")
+        primary.generate.assert_called_once_with(prompt="Explain recursion", system_prompt="Tutor prompt")
+        fallback.generate.assert_called_once_with(prompt="Explain recursion", system_prompt="Tutor prompt")
+
+    def test_fallback_service_gemini_rate_limit_falls_back_to_groq(self):
+        primary = MagicMock()
+        primary.generate.side_effect = LLMRateLimitError("Gemini HTTP 429")
+        fallback = MagicMock()
+        fallback.generate.return_value = "Groq fallback answer"
+
+        service = FallbackLLMService(primary=primary, fallback=fallback)
+        result = service.generate("Explain sorting")
+
+        self.assertEqual(result, "Groq fallback answer")
+        fallback.generate.assert_called_once()
+
+    def test_fallback_service_gemini_auth_error_does_not_fallback(self):
+        primary = MagicMock()
+        primary.generate.side_effect = LLMAuthError("Gemini HTTP 401")
+        fallback = MagicMock()
+
+        service = FallbackLLMService(primary=primary, fallback=fallback)
+        with self.assertRaises(LLMAuthError):
+            service.generate("Explain graphs")
+        fallback.generate.assert_not_called()
+
+    def test_fallback_service_gemini_invalid_request_does_not_fallback(self):
+        primary = MagicMock()
+        primary.generate.side_effect = LLMInvalidRequestError("Gemini HTTP 400")
+        fallback = MagicMock()
+
+        service = FallbackLLMService(primary=primary, fallback=fallback)
+        with self.assertRaises(LLMInvalidRequestError):
+            service.generate("Explain dynamic programming")
+        fallback.generate.assert_not_called()
+
+    def test_fallback_service_both_providers_fail(self):
+        primary = MagicMock()
+        primary.generate.side_effect = LLMUnavailableError("Gemini HTTP 503")
+        fallback = MagicMock()
+        fallback.generate.side_effect = LLMUnavailableError("Groq HTTP 503")
+
+        service = FallbackLLMService(primary=primary, fallback=fallback)
+        with self.assertRaises(LLMUnavailableError):
+            service.generate("Explain trees")
+
+        primary.generate.assert_called_once()
+        fallback.generate.assert_called_once()
+
+    def test_fallback_service_not_configured_raises_directly(self):
+        primary = MagicMock()
+        primary.generate.side_effect = LLMUnavailableError("Gemini HTTP 503")
+
+        service = FallbackLLMService(primary=primary, fallback=None)
+        with self.assertRaises(LLMUnavailableError):
+            service.generate("Explain trees")
+
+    def test_get_llm_service_factory_with_groq_fallback(self):
+        env = {
+            "AI_PROVIDER": "gemini",
+            "GEMINI_API_KEY": "dummy-gemini-key",
+            "AI_FALLBACK_PROVIDER": "groq",
+            "GROQ_API_KEY": "dummy-groq-key",
+            "AI_FALLBACK_MODEL": "llama-3.3-70b-versatile",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            service = get_llm_service()
+            self.assertIsInstance(service, FallbackLLMService)
+            self.assertIsInstance(service.primary, GeminiLLMService)
+            self.assertIsInstance(service.fallback, OpenAILLMService)
+            self.assertEqual(service.fallback.model, "llama-3.3-70b-versatile")
+            self.assertEqual(service.fallback.base_url, "https://api.groq.com/openai/v1")
 
 
 class TutorRealEndToEndIntegrationTestCase(APITestCase):
