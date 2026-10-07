@@ -756,3 +756,115 @@ class AIModuleUnitTests(APITestCase):
             service = get_llm_service()
             self.assertIsInstance(service, OpenAILLMService)
 
+
+class TutorRealEndToEndIntegrationTestCase(APITestCase):
+    """
+    End-to-end integration test for Tutor RAG pipeline using real ChromaDB,
+    sentence embeddings, material ingestion, citation integrity, and user isolation.
+    """
+
+    def setUp(self):
+        import tempfile
+        self.user1 = User.objects.create_user(
+            username="student_e2e_1",
+            email="student1@example.com",
+            password="testpassword123",
+        )
+        self.token1 = Token.objects.create(user=self.user1)
+
+        self.user2 = User.objects.create_user(
+            username="student_e2e_2",
+            email="student2@example.com",
+            password="testpassword123",
+        )
+        self.token2 = Token.objects.create(user=self.user2)
+
+        self.temp_dir = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_end_to_end_tutor_chat_and_user_isolation(self):
+        try:
+            import pymupdf as fitz
+        except ImportError:
+            import fitz
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from knowledge.pipeline import process_material
+        from materials.models import Material
+
+        # 1. Ingest real PDF for User 1
+        doc = fitz.open()
+        p1 = doc.new_page()
+        p1.insert_text(
+            (50, 72),
+            "Deep learning is a subset of machine learning based on artificial neural networks "
+            "with multiple representation layers. It enables models to learn complex hierarchical patterns.",
+        )
+        pdf_bytes = doc.tobytes()
+        doc.close()
+
+        uploaded = SimpleUploadedFile("deep_learning_intro.pdf", pdf_bytes, content_type="application/pdf")
+        material = Material.objects.create(
+            user=self.user1,
+            title="Introduction to Deep Learning",
+            file=uploaded,
+            material_type="pdf",
+            status="uploaded",
+        )
+
+        with self.settings(CHROMA_PERSIST_DIRECTORY=self.temp_dir.name):
+            process_material(material)
+
+            # 2. User 1 asks Tutor a question
+            self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token1.key}")
+            with patch("ai.tutor_service.get_llm_service") as mock_get_llm:
+                mock_llm = MagicMock()
+                mock_llm.generate.return_value = (
+                    "Deep learning is a subset of machine learning using multi-layered artificial neural networks "
+                    "to learn hierarchical patterns, as explained in Introduction to Deep Learning (Page 1)."
+                )
+                mock_get_llm.return_value = mock_llm
+
+                response = self.client.post(
+                    reverse("tutor-chat"),
+                    {"content": "What is deep learning? Explain it in simple terms."},
+                    format="json",
+                )
+
+                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                self.assertEqual(response.data["role"], "ai")
+                self.assertTrue(response.data["id"].startswith("tutor-"))
+                self.assertIn("Deep learning is a subset", response.data["content"])
+                self.assertEqual(len(response.data["sources"]), 1)
+                self.assertEqual(response.data["sources"][0]["title"], "Introduction to Deep Learning")
+                self.assertEqual(response.data["sources"][0]["page"], 1)
+                self.assertEqual(response.data["sources"][0]["type"], "pdf")
+
+                # Verify LLM prompt received grounded context
+                prompt_arg = mock_llm.generate.call_args[1]["prompt"]
+                self.assertIn("What is deep learning?", prompt_arg)
+                self.assertIn("artificial neural networks", prompt_arg)
+
+            # 3. Verify User 1 chat history
+            history_res1 = self.client.get(reverse("tutor-history"))
+            self.assertEqual(history_res1.status_code, status.HTTP_200_OK)
+            self.assertEqual(len(history_res1.data), 2)
+            self.assertEqual(history_res1.data[0]["role"], "student")
+            self.assertEqual(history_res1.data[1]["role"], "ai")
+
+            # 4. Verify User 2 has isolated access (cannot see User 1's materials or history)
+            self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token2.key}")
+            response2 = self.client.post(
+                reverse("tutor-chat"),
+                {"content": "What is deep learning? Explain it in simple terms."},
+                format="json",
+            )
+            self.assertEqual(response2.status_code, status.HTTP_404_NOT_FOUND)
+            self.assertEqual(response2.data["code"], "no_relevant_material")
+
+            history_res2 = self.client.get(reverse("tutor-history"))
+            self.assertEqual(history_res2.status_code, status.HTTP_200_OK)
+            self.assertEqual(len(history_res2.data), 0)
+
+
