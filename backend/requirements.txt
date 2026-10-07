@@ -1,0 +1,10 @@
+asgiref==3.12.1
+chromadb==1.5.9
+Django==6.1.1
+django-cors-headers==4.9.0
+djangorestframework==3.18.1
+PyMuPDF==1.28.2
+python-dotenv==1.2.3
+python-pptx==1.0.2
+sentence-transformers==6.1.0
+sqlparse==0.6.0
