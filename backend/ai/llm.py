@@ -243,3 +243,4 @@ def get_llm_service() -> BaseLLMService:
     else:
         logger.warning("Unrecognized AI_PROVIDER '%s', defaulting to unconfigured.", provider)
         return UnconfiguredLLMService()
+
