@@ -76,7 +76,9 @@ export async function getDocuments(): Promise<KnowledgeDocument[]> {
 export async function getDocument(id: string): Promise<KnowledgeDocument> {
   if (USE_MOCK) {
     await new Promise((r) => setTimeout(r, 300));
-    return mockDocuments.find((d) => d.id === id) || mockDocuments[0];
+    const doc = mockDocuments.find((d) => d.id === id);
+    if (!doc) throw new Error(`Document with ID "${id}" not found`);
+    return doc;
   }
 
   const mat = await apiRequest<BackendMaterial>(`/api/materials/${id}`);
