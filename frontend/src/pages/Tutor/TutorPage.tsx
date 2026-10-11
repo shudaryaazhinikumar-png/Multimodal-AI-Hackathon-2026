@@ -9,9 +9,7 @@ import {
   CheckCircle2,
   ArrowRight,
   Sparkles,
-  Bookmark,
   MessageSquare,
-  X,
 } from 'lucide-react';
 import { ClayCard } from '@/components/clay/ClayCard';
 import { ClayButton } from '@/components/clay/ClayButton';
@@ -41,7 +39,7 @@ export function TutorPage() {
   const [selectedCitation, setSelectedCitation] = useState<SourceCitation | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [showConversations, setShowConversations] = useState(false);
-  const [bookmarked, setBookmarked] = useState(false);
+  const [, setBookmarked] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
