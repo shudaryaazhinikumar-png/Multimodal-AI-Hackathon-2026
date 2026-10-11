@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import { ArrowLeft, Search, FileText, Video, Presentation, BookOpen, Highlighter } from 'lucide-react';
 import { ClayCard } from '@/components/clay/ClayCard';
 import { ClayBadge } from '@/components/clay/ClayBadge';
-import { LoadingState } from '@/components/ui/States';
+import { LoadingState, EmptyState } from '@/components/ui/States';
 import { useKnowledge } from '@/hooks/useKnowledge';
 import type { KnowledgeDocument } from '@/types';
 
@@ -26,14 +26,39 @@ export function DocumentViewerPage() {
 
   useEffect(() => {
     if (!id) return;
-    getDoc(id).then((d) => {
-      setDoc(d);
-      setLoading(false);
-    });
+    getDoc(id)
+      .then((d) => {
+        setDoc(d);
+        setLoading(false);
+      })
+      .catch(() => {
+        setDoc(null);
+        setLoading(false);
+      });
   }, [id, getDoc]);
 
   if (loading) return <LoadingState label="Loading document..." />;
-  if (!doc) return <LoadingState label="Document not found" />;
+  if (!doc) {
+    return (
+      <div className="mx-auto max-w-5xl space-y-6">
+        <button
+          onClick={() => navigate('/knowledge')}
+          className="flex items-center gap-1 text-sm text-clay-500 hover:text-charcoal-700"
+        >
+          <ArrowLeft size={16} />
+          Back to Knowledge Base
+        </button>
+        <EmptyState
+          icon={<BookOpen size={28} className="text-clay-400" />}
+          title="Document not found"
+          message="The requested material could not be found or may have been removed."
+          actionLabel="Back to Knowledge Base"
+          onAction={() => navigate('/knowledge')}
+        />
+      </div>
+    );
+  }
+
 
   const config = typeConfig[doc.type] || typeConfig.pdf;
   const Icon = config.icon;
