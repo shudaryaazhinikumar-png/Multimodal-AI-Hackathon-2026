@@ -1,45 +1,41 @@
-import { useState, useEffect } from 'react';
-import { Outlet } from 'react-router-dom';
-import { Sidebar } from './Sidebar';
-import { TopHeader } from './TopHeader';
-import { SearchCommand } from './SearchCommand';
+import { Outlet, useNavigate } from 'react-router-dom';
+import { useEffect } from 'react';
+import { Sidebar } from '@/components/layout/Sidebar';
+import { Topbar } from '@/components/layout/Topbar';
+import { MobileNav } from '@/components/layout/MobileNav';
+import { useAuth } from '@/hooks/useAuth';
 
 export function AppLayout() {
-  const [collapsed, setCollapsed] = useState(false);
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false);
+  const { isAuthenticated, loading } = useAuth();
+  const navigate = useNavigate();
 
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault();
-        setSearchOpen(true);
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, []);
+  if (!loading && !isAuthenticated) {
+    navigate('/login', { replace: true });
+    }
+  },[isAuthenticated, loading, navigate]);
+
+  if (loading || !isAuthenticated) { 
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-ivory-50">
+        <div className="flex flex-col items-center gap-4">
+          <div className="h-10 w-10 animate-spin rounded-full border-4 border-ivory-200 border-t-violet-600" />
+          <p className="text-sm text-clay-500">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="flex min-h-screen bg-background">
-      <Sidebar
-        collapsed={collapsed}
-        onToggle={() => setCollapsed(!collapsed)}
-        mobileOpen={mobileOpen}
-        onCloseMobile={() => setMobileOpen(false)}
-      />
-      <div className="flex flex-1 flex-col min-w-0">
-        <TopHeader
-          onOpenSearch={() => setSearchOpen(true)}
-          onOpenMobileNav={() => setMobileOpen(true)}
-        />
-        <main className="flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-7xl px-4 py-6 lg:px-8 lg:py-8">
-            <Outlet />
-          </div>
+    <div className="min-h-screen bg-ivory-50">
+      <Sidebar />
+      <div className="lg:pl-64">
+        <Topbar />
+        <main className="px-4 py-6 pb-24 lg:px-8 lg:pb-8">
+          <Outlet />
         </main>
       </div>
-      <SearchCommand open={searchOpen} onClose={() => setSearchOpen(false)} />
+      <MobileNav />
     </div>
   );
 }
