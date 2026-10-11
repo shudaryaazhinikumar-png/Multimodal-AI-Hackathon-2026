@@ -13,6 +13,7 @@ export async function getTopicMastery(): Promise<{ topic: string; mastery: numbe
 }
 
 export async function getAnalytics(_range: string): Promise<ProgressAnalytics> {
+  void _range;
   await new Promise((r) => setTimeout(r, 300));
   return mockProgress;
 }
