@@ -3,6 +3,7 @@ import { mockAssessmentSession, mockAssessmentResult } from '../mock/mockData';
 
 // Assessment is a deferred backend feature; mock behavior is preserved for UI demo.
 export async function startAssessment(_topic?: string): Promise<AssessmentSession> {
+  void _topic;
   await new Promise((r) => setTimeout(r, 400));
   return { ...mockAssessmentSession, id: `a-${Date.now()}`, answers: {} };
 }
@@ -32,6 +33,7 @@ export async function submitAnswer(
 }
 
 export async function getAssessmentResult(_assessmentId: string): Promise<AssessmentResult> {
+  void _assessmentId;
   await new Promise((r) => setTimeout(r, 300));
   return mockAssessmentResult;
 }
