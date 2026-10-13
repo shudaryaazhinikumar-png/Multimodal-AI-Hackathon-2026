@@ -215,7 +215,7 @@ The application integrates a React frontend, Django REST API, document-based kno
 
 ## Repository
 
-GitHub: https://github.com/shudaryaazhini-png/Multimodal-AI-Hackathon-2026
+GitHub: https://github.com/shudaryaazhinikumar-png/Multimodal-AI-Hackathon-2026
 
 ## Future Improvements
 
