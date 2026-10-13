@@ -19,8 +19,8 @@ from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Load environment variables from backend/.env
-load_dotenv(BASE_DIR / ".env")
+# Load environment variables from backend/.env (allowing .env to override shell defaults)
+load_dotenv(BASE_DIR / ".env", override=True)
 
 
 # ============================================================
@@ -197,6 +197,11 @@ DATABASES = configure_databases(DEBUG, os.getenv("DATABASE_URL", ""), BASE_DIR)
 CHROMA_PERSIST_DIRECTORY = os.getenv(
     "CHROMA_PERSIST_DIRECTORY",
     str(BASE_DIR / "chroma_db"),
+)
+
+# Minimum cosine relevance threshold for RAG retrieval filtering (0.0 - 1.0)
+RAG_MIN_RELEVANCE_THRESHOLD = float(
+    os.getenv("RAG_MIN_RELEVANCE_THRESHOLD", "0.65")
 )
 
 

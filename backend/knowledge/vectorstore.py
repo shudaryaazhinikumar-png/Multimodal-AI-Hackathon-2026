@@ -14,8 +14,6 @@ class ChromaVectorStore:
     Manages embedding storage and semantic search in ChromaDB with per-user isolation.
     """
 
-    _client: Optional[chromadb.PersistentClient] = None
-
     def __init__(self, persist_dir: Optional[str] = None):
         self.persist_dir = persist_dir or getattr(
             settings,
@@ -23,6 +21,7 @@ class ChromaVectorStore:
             str(settings.BASE_DIR / "chroma_db"),
         )
         Path(self.persist_dir).mkdir(parents=True, exist_ok=True)
+        self._client: Optional[chromadb.PersistentClient] = None
 
     def _get_client(self) -> chromadb.PersistentClient:
         if self._client is None:
@@ -123,9 +122,11 @@ class ChromaVectorStore:
         query_embedding: List[float],
         n_results: int = 5,
         material_id: Optional[int] = None,
+        min_relevance: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
         """
         Performs semantic similarity search against the user's isolated collection.
+        Optionally filters results below min_relevance threshold (0.0 to 1.0).
         """
         collection = self.get_user_collection(user_id)
         count = collection.count()
@@ -151,6 +152,12 @@ class ChromaVectorStore:
         metadatas = results["metadatas"][0]
         distances = results.get("distances", [[]])[0]
 
+        effective_threshold = (
+            min_relevance
+            if min_relevance is not None
+            else getattr(settings, "RAG_MIN_RELEVANCE_THRESHOLD", None)
+        )
+
         for idx in range(len(ids)):
             meta = metadatas[idx]
             dist = distances[idx] if idx < len(distances) else 0.0
@@ -158,6 +165,11 @@ class ChromaVectorStore:
             # Cosine distance in Chroma: 0 = identical, 2 = opposite.
             # Convert to similarity score between 0.0 and 1.0.
             similarity = max(0.0, min(1.0, 1.0 - (dist / 2.0)))
+            relevance_score = round(similarity, 4)
+
+            # Skip low-relevance distractor chunks if threshold is active
+            if effective_threshold is not None and effective_threshold > 0.0 and relevance_score < effective_threshold:
+                continue
 
             page_num = meta.get("page")
             slide_num = meta.get("slide")
@@ -175,13 +187,13 @@ class ChromaVectorStore:
                     "sourceType": mat_type,
                     "page": page_num if page_num and page_num > 0 else None,
                     "slide": slide_num if slide_num and slide_num > 0 else None,
-                    "relevance": round(similarity, 4),
+                    "relevance": relevance_score,
                     # Additional metadata matching prompt specification
                     "materialId": meta.get("material_id"),
                     "documentId": meta.get("document_id"),
                     "title": meta.get("title"),
                     "chunkIndex": meta.get("chunk_index"),
-                    "score": round(similarity, 4),
+                    "score": relevance_score,
                 }
             )
 
@@ -194,6 +206,11 @@ _default_vectorstore: Optional[ChromaVectorStore] = None
 
 def get_vectorstore(persist_dir: Optional[str] = None) -> ChromaVectorStore:
     global _default_vectorstore
-    if _default_vectorstore is None or persist_dir is not None:
-        _default_vectorstore = ChromaVectorStore(persist_dir=persist_dir)
+    target_dir = persist_dir or getattr(
+        settings,
+        "CHROMA_PERSIST_DIRECTORY",
+        str(settings.BASE_DIR / "chroma_db"),
+    )
+    if _default_vectorstore is None or _default_vectorstore.persist_dir != target_dir or persist_dir is not None:
+        _default_vectorstore = ChromaVectorStore(persist_dir=target_dir)
     return _default_vectorstore

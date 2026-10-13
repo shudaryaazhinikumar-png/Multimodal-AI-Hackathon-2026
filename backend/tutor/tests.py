@@ -20,11 +20,17 @@ from ai.llm import (
     LLMTransientError,
     LLMUnavailableError,
     OpenAILLMService,
+    OllamaLLMService,
     UnconfiguredLLMService,
     get_llm_service,
 )
 from ai.prompts import TUTOR_SYSTEM_PROMPT, build_tutor_prompt
-from ai.tutor_service import format_context_from_sources, to_chat_sources
+from ai.tutor_service import (
+    format_context_from_sources,
+    generate_tutor_response,
+    to_chat_sources,
+    TutorNoMaterialError,
+)
 from .models import TutorMessage
 
 
@@ -461,6 +467,161 @@ class TutorAPITestCase(APITestCase):
         self.assertEqual(response.data[0]["content"], "My question")
         self.assertNotIn(other_message.content, str(response.data))
 
+    @patch("ai.tutor_service.get_llm_service")
+    @patch("ai.tutor_service.get_vectorstore")
+    @patch("ai.tutor_service.get_embedding_service")
+    def test_chat_relevance_threshold_filters_distractor_chunks(
+        self,
+        mock_get_embedding_service,
+        mock_get_vectorstore,
+        mock_get_llm_service,
+    ):
+        mock_get_embedding_service.return_value.embed_query.return_value = [0.1, 0.2]
+        # Return mixed results: one above 0.65, one below 0.65
+        mock_get_vectorstore.return_value.search.return_value = [
+            {
+                "id": "chunk-relevant",
+                "text": "Qubits exist in superposition states |0> and |1>.",
+                "sourceName": "Quantum Principles",
+                "sourceType": "pdf",
+                "page": 1,
+                "relevance": 0.88,
+                "materialId": 10,
+                "documentId": 2,
+                "chunkIndex": 0,
+            },
+            {
+                "id": "chunk-distractor",
+                "text": "The capital of Australia is Canberra and the currency is AUD.",
+                "sourceName": "World Geography",
+                "sourceType": "pdf",
+                "page": 44,
+                "relevance": 0.51,
+                "materialId": 11,
+                "documentId": 3,
+                "chunkIndex": 9,
+            },
+        ]
+        mock_llm = MagicMock()
+        mock_llm.generate.return_value = "Quantum superposition means qubits can be in both states simultaneously."
+        mock_get_llm_service.return_value = mock_llm
+
+        self.authenticate()
+        response = self.client.post(
+            self.chat_url,
+            {"content": "What is quantum superposition?"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Verify citations: only the qualifying chunk is returned
+        self.assertEqual(len(response.data["sources"]), 1)
+        self.assertEqual(response.data["sources"][0]["id"], "chunk-relevant")
+        self.assertEqual(response.data["sources"][0]["title"], "Quantum Principles")
+        self.assertEqual(response.data["sources"][0]["relevance"], 0.88)
+
+        # Verify LLM prompt context: contains only the qualifying chunk, distractor excluded
+        prompt_arg = mock_llm.generate.call_args[1]["prompt"]
+        self.assertIn("Quantum Principles", prompt_arg)
+        self.assertIn("Qubits exist in superposition", prompt_arg)
+        self.assertNotIn("World Geography", prompt_arg)
+        self.assertNotIn("Canberra", prompt_arg)
+
+    @patch("ai.tutor_service.get_llm_service")
+    @patch("ai.tutor_service.get_vectorstore")
+    @patch("ai.tutor_service.get_embedding_service")
+    def test_chat_all_chunks_below_threshold_returns_404_without_calling_llm(
+        self,
+        mock_get_embedding_service,
+        mock_get_vectorstore,
+        mock_get_llm_service,
+    ):
+        mock_get_embedding_service.return_value.embed_query.return_value = [0.1, 0.2]
+        # All retrieved chunks are below the 0.65 threshold
+        mock_get_vectorstore.return_value.search.return_value = [
+            {
+                "id": "chunk-distractor-1",
+                "text": "Nearest neighbor chunk A",
+                "sourceName": "Unrelated Notes A",
+                "sourceType": "pdf",
+                "page": 1,
+                "relevance": 0.58,
+                "materialId": 10,
+                "documentId": 2,
+                "chunkIndex": 0,
+            },
+            {
+                "id": "chunk-distractor-2",
+                "text": "Nearest neighbor chunk B",
+                "sourceName": "Unrelated Notes B",
+                "sourceType": "pdf",
+                "page": 2,
+                "relevance": 0.49,
+                "materialId": 11,
+                "documentId": 3,
+                "chunkIndex": 1,
+            },
+        ]
+        mock_llm = MagicMock()
+        mock_get_llm_service.return_value = mock_llm
+
+        self.authenticate()
+        response = self.client.post(
+            self.chat_url,
+            {"content": "What is the capital of Australia?"},
+            format="json",
+        )
+
+        # Standard no-relevant-material response contract
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(response.data["code"], "no_relevant_material")
+        self.assertIn("No relevant study material", response.data["error"])
+
+        # LLM must NOT be called when chunks are below threshold
+        mock_llm.generate.assert_not_called()
+        # No chat history persisted
+        self.assertEqual(TutorMessage.objects.count(), 0)
+
+    @patch("ai.tutor_service.get_llm_service")
+    @patch("ai.tutor_service.get_vectorstore")
+    @patch("ai.tutor_service.get_embedding_service")
+    def test_chat_threshold_override_via_settings(
+        self,
+        mock_get_embedding_service,
+        mock_get_vectorstore,
+        mock_get_llm_service,
+    ):
+        mock_get_embedding_service.return_value.embed_query.return_value = [0.1, 0.2]
+        mock_get_vectorstore.return_value.search.return_value = [
+            {
+                "id": "chunk-borderline",
+                "text": "Borderline relevance chunk",
+                "sourceName": "Borderline Notes",
+                "sourceType": "pdf",
+                "page": 1,
+                "relevance": 0.55,
+                "materialId": 10,
+                "documentId": 2,
+                "chunkIndex": 0,
+            }
+        ]
+        mock_llm = MagicMock()
+        mock_llm.generate.return_value = "Answer generated using borderline context."
+        mock_get_llm_service.return_value = mock_llm
+
+        self.authenticate()
+
+        # With default 0.65 threshold, 0.55 fails
+        res_default = self.client.post(self.chat_url, {"content": "Test query"})
+        self.assertEqual(res_default.status_code, status.HTTP_404_NOT_FOUND)
+
+        # With threshold relaxed to 0.50, 0.55 qualifies and LLM is invoked
+        with self.settings(RAG_MIN_RELEVANCE_THRESHOLD=0.50):
+            res_relaxed = self.client.post(self.chat_url, {"content": "Test query"})
+            self.assertEqual(res_relaxed.status_code, status.HTTP_200_OK)
+            mock_llm.generate.assert_called_once()
+
+
 
 class AIModuleUnitTests(APITestCase):
     """
@@ -513,6 +674,126 @@ class AIModuleUnitTests(APITestCase):
         self.assertEqual(sources[0]["title"], "My Note")
         self.assertEqual(sources[0]["snippet"], "Sample text")
         self.assertEqual(sources[0]["page"], 1)
+
+    @patch("ai.tutor_service.get_vectorstore")
+    @patch("ai.tutor_service.get_embedding_service")
+    def test_generate_tutor_response_filters_low_relevance_chunks(
+        self,
+        mock_get_embedding,
+        mock_get_vectorstore,
+    ):
+        mock_get_embedding.return_value.embed_query.return_value = [0.1, 0.2]
+        mock_get_vectorstore.return_value.search.return_value = [
+            {
+                "id": "c1",
+                "text": "Relevant chunk on deep learning",
+                "sourceName": "DL Notes",
+                "sourceType": "pdf",
+                "page": 2,
+                "relevance": 0.82,
+            },
+            {
+                "id": "c2",
+                "text": "Irrelevant chunk on ancient pottery",
+                "sourceName": "Pottery",
+                "sourceType": "pdf",
+                "page": 9,
+                "relevance": 0.44,
+            },
+        ]
+        mock_llm = MagicMock()
+        mock_llm.generate.return_value = "Deep learning uses neural networks."
+
+        result = generate_tutor_response(
+            user_id=1,
+            question="What is deep learning?",
+            llm_service=mock_llm,
+        )
+
+        self.assertEqual(result["answer"], "Deep learning uses neural networks.")
+        self.assertEqual(len(result["sources"]), 1)
+        self.assertEqual(result["sources"][0]["id"], "c1")
+        self.assertEqual(result["sources"][0]["relevance"], 0.82)
+        # LLM prompt only receives the relevant chunk
+        prompt_used = mock_llm.generate.call_args[1]["prompt"]
+        self.assertIn("DL Notes", prompt_used)
+        self.assertNotIn("Pottery", prompt_used)
+
+    @patch("ai.tutor_service.get_vectorstore")
+    @patch("ai.tutor_service.get_embedding_service")
+    def test_generate_tutor_response_all_below_threshold_raises_no_material_error(
+        self,
+        mock_get_embedding,
+        mock_get_vectorstore,
+    ):
+        mock_get_embedding.return_value.embed_query.return_value = [0.1, 0.2]
+        mock_get_vectorstore.return_value.search.return_value = [
+            {
+                "id": "c1",
+                "text": "Distractor chunk 1",
+                "sourceName": "Distractor Notes 1",
+                "sourceType": "pdf",
+                "page": 1,
+                "relevance": 0.58,
+            },
+            {
+                "id": "c2",
+                "text": "Distractor chunk 2",
+                "sourceName": "Distractor Notes 2",
+                "sourceType": "pdf",
+                "page": 2,
+                "relevance": 0.52,
+            },
+        ]
+        mock_llm = MagicMock()
+
+        with self.assertRaises(TutorNoMaterialError):
+            generate_tutor_response(
+                user_id=1,
+                question="Out of domain question",
+                llm_service=mock_llm,
+            )
+
+        # Confirm LLM was never invoked
+        mock_llm.generate.assert_not_called()
+
+    @patch("ai.tutor_service.get_vectorstore")
+    @patch("ai.tutor_service.get_embedding_service")
+    def test_generate_tutor_response_material_specific_filtering(
+        self,
+        mock_get_embedding,
+        mock_get_vectorstore,
+    ):
+        mock_get_embedding.return_value.embed_query.return_value = [0.1, 0.2]
+        mock_get_vectorstore.return_value.search.return_value = [
+            {
+                "id": "c-mat",
+                "text": "Specific material chunk",
+                "sourceName": "Material 42",
+                "sourceType": "pdf",
+                "page": 1,
+                "relevance": 0.79,
+            }
+        ]
+        mock_llm = MagicMock()
+        mock_llm.generate.return_value = "Answer from material 42."
+
+        result = generate_tutor_response(
+            user_id=1,
+            question="Question on material 42",
+            material_id=42,
+            llm_service=mock_llm,
+        )
+
+        mock_get_vectorstore.return_value.search.assert_called_once_with(
+            user_id=1,
+            query_embedding=[0.1, 0.2],
+            n_results=5,
+            material_id=42,
+        )
+        self.assertEqual(len(result["sources"]), 1)
+        self.assertEqual(result["sources"][0]["id"], "c-mat")
+
 
     @patch("urllib.request.urlopen")
     def test_gemini_service_generate_success(self, mock_urlopen):
@@ -911,6 +1192,100 @@ class AIModuleUnitTests(APITestCase):
             self.assertIsInstance(service.fallback, OpenAILLMService)
             self.assertEqual(service.fallback.model, "llama-3.3-70b-versatile")
             self.assertEqual(service.fallback.base_url, "https://api.groq.com/openai/v1")
+
+    @patch("urllib.request.urlopen")
+    def test_ollama_service_generate_success(self, mock_urlopen):
+        mock_response = MagicMock()
+        response_body = {
+            "message": {
+                "role": "assistant",
+                "content": "Ollama generated explanation for student.",
+            },
+            "done": True,
+        }
+        mock_response.read.return_value = json.dumps(response_body).encode("utf-8")
+        mock_response.__enter__.return_value = mock_response
+        mock_urlopen.return_value = mock_response
+
+        service = OllamaLLMService(model="qwen2.5:0.5b")
+        result = service.generate("Explain gradient descent", system_prompt="You are a tutor.")
+        self.assertEqual(result, "Ollama generated explanation for student.")
+
+    @patch("urllib.request.urlopen")
+    def test_ollama_service_empty_prompt_raises_invalid_request(self, mock_urlopen):
+        service = OllamaLLMService(model="qwen2.5:0.5b")
+        with self.assertRaises(LLMInvalidRequestError):
+            service.generate("   ")
+
+    @patch("urllib.request.urlopen")
+    def test_ollama_service_empty_response_raises_generation_error(self, mock_urlopen):
+        mock_response = MagicMock()
+        response_body = {"message": {"role": "assistant", "content": ""}, "done": True}
+        mock_response.read.return_value = json.dumps(response_body).encode("utf-8")
+        mock_response.__enter__.return_value = mock_response
+        mock_urlopen.return_value = mock_response
+
+        service = OllamaLLMService(model="qwen2.5:0.5b")
+        with self.assertRaises(LLMGenerationError):
+            service.generate("Explain neurons")
+
+    @patch("urllib.request.urlopen")
+    def test_ollama_service_404_model_not_found(self, mock_urlopen):
+        err_file = io.BytesIO(b'{"error": "model not found"}')
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            url="http://127.0.0.1:11434/api/chat",
+            code=404,
+            msg="Not Found",
+            hdrs={},
+            fp=err_file,
+        )
+
+        service = OllamaLLMService(model="nonexistent:model")
+        with self.assertRaises(LLMInvalidRequestError):
+            service.generate("Hello")
+
+    @patch("urllib.request.urlopen")
+    def test_ollama_service_unreachable_raises_unavailable(self, mock_urlopen):
+        mock_urlopen.side_effect = urllib.error.URLError("Connection refused")
+
+        service = OllamaLLMService(model="qwen2.5:0.5b", max_retries=1)
+        with self.assertRaises(LLMUnavailableError):
+            service.generate("Hello")
+
+    @patch("urllib.request.urlopen")
+    def test_ollama_service_check_health_healthy(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps({
+            "models": [{"name": "qwen2.5:0.5b"}, {"name": "llama3:latest"}]
+        }).encode("utf-8")
+        mock_response.__enter__.return_value = mock_response
+        mock_urlopen.return_value = mock_response
+
+        service = OllamaLLMService(model="qwen2.5:0.5b")
+        health = service.check_health()
+        self.assertEqual(health["status"], "healthy")
+        self.assertTrue(health["model_available"])
+
+    @patch("urllib.request.urlopen")
+    def test_ollama_service_check_health_unhealthy(self, mock_urlopen):
+        mock_urlopen.side_effect = urllib.error.URLError("Connection refused")
+
+        service = OllamaLLMService(model="qwen2.5:0.5b")
+        health = service.check_health()
+        self.assertEqual(health["status"], "unhealthy")
+        self.assertFalse(health["model_available"])
+
+    def test_get_llm_service_factory_ollama(self):
+        env = {
+            "AI_PROVIDER": "ollama",
+            "OLLAMA_MODEL": "qwen2.5:0.5b",
+            "OLLAMA_BASE_URL": "http://127.0.0.1:11434",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            service = get_llm_service()
+            self.assertIsInstance(service, OllamaLLMService)
+            self.assertEqual(service.model, "qwen2.5:0.5b")
+            self.assertEqual(service.base_url, "http://127.0.0.1:11434")
 
 
 class TutorRealEndToEndIntegrationTestCase(APITestCase):
