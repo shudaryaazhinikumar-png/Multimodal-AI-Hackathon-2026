@@ -11,6 +11,14 @@ class TutorChatRequestSerializer(serializers.Serializer):
         allow_blank=True,
         allow_null=True,
     )
+    material_id = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+    )
+    document_id = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+    )
 
 
 class TutorMessageSerializer(serializers.ModelSerializer):

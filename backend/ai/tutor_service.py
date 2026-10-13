@@ -85,6 +85,7 @@ def generate_tutor_response(
     *,
     user_id: int,
     question: str,
+    material_id: Optional[int] = None,
     llm_service: Optional[BaseLLMService] = None,
 ) -> Dict[str, Any]:
     """
@@ -102,11 +103,15 @@ def generate_tutor_response(
     # 1. Vector Retrieval
     try:
         query_embedding = get_embedding_service().embed_query(normalized_question)
-        results = get_vectorstore().search(
-            user_id=user_id,
-            query_embedding=query_embedding,
-            n_results=5,
-        )
+        search_kwargs = {
+            "user_id": user_id,
+            "query_embedding": query_embedding,
+            "n_results": 5,
+        }
+        if material_id is not None:
+            search_kwargs["material_id"] = material_id
+
+        results = get_vectorstore().search(**search_kwargs)
     except Exception as e:
         logger.exception("Tutor retrieval failed for user %s: %s", user_id, e)
         raise TutorRetrievalError("Study material retrieval failed.") from e

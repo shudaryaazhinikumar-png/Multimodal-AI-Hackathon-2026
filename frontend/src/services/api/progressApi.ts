@@ -1,25 +1,37 @@
 import type { ProgressAnalytics, RevisionItem } from '@/types';
 import { mockProgress, mockRevisionItems } from '../mock/mockData';
+import { apiRequest, USE_MOCK } from './client';
 
-// Progress & Revision are deferred backend features; mock behavior is preserved for UI demo.
 export async function getProgress(): Promise<ProgressAnalytics> {
-  await new Promise((r) => setTimeout(r, 300));
-  return mockProgress;
+  if (USE_MOCK) {
+    await new Promise((r) => setTimeout(r, 300));
+    return mockProgress;
+  }
+  return apiRequest<ProgressAnalytics>('/api/progress/analytics');
 }
 
 export async function getTopicMastery(): Promise<{ topic: string; mastery: number }[]> {
-  await new Promise((r) => setTimeout(r, 200));
-  return mockProgress.topicMastery;
+  if (USE_MOCK) {
+    await new Promise((r) => setTimeout(r, 200));
+    return mockProgress.topicMastery;
+  }
+  const data = await getProgress();
+  return data.topicMastery || [];
 }
 
-export async function getAnalytics(_range: string): Promise<ProgressAnalytics> {
-  void _range;
-  await new Promise((r) => setTimeout(r, 300));
-  return mockProgress;
+export async function getAnalytics(range: string): Promise<ProgressAnalytics> {
+  if (USE_MOCK) {
+    void range;
+    await new Promise((r) => setTimeout(r, 300));
+    return mockProgress;
+  }
+  return apiRequest<ProgressAnalytics>(`/api/progress/analytics?range=${encodeURIComponent(range)}`);
 }
 
 export async function getRecommendations(): Promise<RevisionItem[]> {
-  await new Promise((r) => setTimeout(r, 200));
-  return mockRevisionItems;
+  if (USE_MOCK) {
+    await new Promise((r) => setTimeout(r, 200));
+    return mockRevisionItems;
+  }
+  return apiRequest<RevisionItem[]>('/api/progress/recommendations');
 }
-

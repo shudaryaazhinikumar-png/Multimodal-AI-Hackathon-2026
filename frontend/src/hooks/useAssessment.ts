@@ -12,42 +12,51 @@ export function useAssessment() {
   const start = useCallback(async (topic?: string) => {
     setLoading(true);
     setResult(null);
-    const s = await startAssessment(topic);
-    setSession(s);
-    setLoading(false);
+    try {
+      const s = await startAssessment(topic);
+      setSession(s);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   const submit = useCallback(
     async (questionId: string, optionId: string) => {
       if (!session) return;
       setSubmitting(true);
-      const feedback = await submitAnswer(session.id, questionId, optionId);
-      setLastFeedback(feedback);
+      try {
+        const feedback = await submitAnswer(session.id, questionId, optionId);
+        setLastFeedback(feedback);
 
-      setSession((prev) => {
-        if (!prev) return prev;
-        const newAnswers = { ...prev.answers, [questionId]: optionId };
-        const nextQ = prev.currentQuestion + 1;
-        return {
-          ...prev,
-          answers: newAnswers,
-          currentQuestion: nextQ,
-          completed: nextQ >= prev.totalQuestions,
-        };
-      });
+        setSession((prev) => {
+          if (!prev) return prev;
+          const newAnswers = { ...prev.answers, [questionId]: optionId };
+          const nextQ = prev.currentQuestion + 1;
+          return {
+            ...prev,
+            answers: newAnswers,
+            currentQuestion: nextQ,
+            completed: nextQ >= prev.totalQuestions,
+          };
+        });
 
-      setSubmitting(false);
-      return feedback;
+        return feedback;
+      } finally {
+        setSubmitting(false);
+      }
     },
     [session]
   );
 
   const getResult = useCallback(async (assessmentId: string) => {
     setLoading(true);
-    const r = await getAssessmentResult(assessmentId);
-    setResult(r);
-    setLoading(false);
-    return r;
+    try {
+      const r = await getAssessmentResult(assessmentId);
+      setResult(r);
+      return r;
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   return {

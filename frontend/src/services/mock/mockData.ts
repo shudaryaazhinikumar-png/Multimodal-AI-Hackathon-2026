@@ -131,123 +131,7 @@ export const mockConversations: Conversation[] = [
   },
 ];
 
-export const mockDocuments: KnowledgeDocument[] = [
-  {
-    id: 'd1',
-    title: 'Machine Learning Textbook',
-    type: 'pdf',
-    pages: 342,
-    status: 'indexed',
-    uploadedAt: '2 weeks ago',
-    fileSize: '12.4 MB',
-    topics: ['Neural Networks', 'Gradient Descent', 'Optimization', 'Regularization'],
-    excerpt: 'A comprehensive guide to machine learning fundamentals...',
-    sections: [
-      {
-        id: 's1',
-        title: 'Chapter 3: Neural Networks',
-        page: 45,
-        content:
-          'Neural networks are computational models inspired by the structure of biological neurons. They consist of layers of interconnected nodes that process information...',
-        highlights: ['deep learning', 'hidden layers', 'activation function'],
-      },
-      {
-        id: 's2',
-        title: 'Chapter 5: Backpropagation',
-        page: 72,
-        content:
-          'The backpropagation algorithm computes the gradient of the loss function with respect to each weight by the chain rule, moving backward from the output layer...',
-        highlights: ['chain rule', 'gradient', 'loss function'],
-      },
-      {
-        id: 's3',
-        title: 'Chapter 6: Optimization',
-        page: 85,
-        content:
-          'Adam combines the advantages of AdaGrad and RMSProp, adapting learning rates based on moment estimates...',
-        highlights: ['Adam', 'AdaGrad', 'learning rate'],
-      },
-    ],
-  },
-  {
-    id: 'd2',
-    title: 'Neural Networks Lecture 04',
-    type: 'video',
-    duration: '48 minutes',
-    status: 'transcribed',
-    uploadedAt: '1 week ago',
-    fileSize: '320 MB',
-    topics: ['Neural Networks', 'Backpropagation', 'Activation Functions'],
-    excerpt: 'Lecture covering neural network architectures and training...',
-    sections: [
-      {
-        id: 's4',
-        title: 'Introduction to Backpropagation',
-        timestamp: '32:18',
-        content:
-          'In this segment, we discuss how backpropagation works. The key idea is to propagate the error signal backward through the network...',
-        highlights: ['error signal', 'backward pass', 'chain rule'],
-      },
-      {
-        id: 's5',
-        title: 'Activation Functions',
-        timestamp: '15:30',
-        content:
-          'Activation functions introduce non-linearity. Without them, the network would just be a linear transformation regardless of depth...',
-        highlights: ['non-linearity', 'ReLU', 'sigmoid'],
-      },
-    ],
-  },
-  {
-    id: 'd3',
-    title: 'ML Week 4 Slides',
-    type: 'slide',
-    slides: 42,
-    status: 'indexed',
-    uploadedAt: '5 days ago',
-    fileSize: '8.2 MB',
-    topics: ['Activation Functions', 'Loss Functions', 'Optimization'],
-    excerpt: 'Week 4 lecture slides on neural network components...',
-    sections: [
-      {
-        id: 's6',
-        title: 'Slide 12: Activation Functions',
-        slide: 12,
-        content:
-          'Activation functions introduce non-linearity into the network. Common choices include ReLU, Sigmoid, and Tanh.',
-        highlights: ['ReLU', 'non-linearity'],
-      },
-      {
-        id: 's7',
-        title: 'Slide 25: Loss Functions',
-        slide: 25,
-        content: 'Loss functions measure how far the prediction is from the true value.',
-        highlights: ['cross-entropy', 'MSE'],
-      },
-    ],
-  },
-  {
-    id: 'd4',
-    title: 'Backpropagation Notes',
-    type: 'note',
-    pages: 8,
-    status: 'ready',
-    uploadedAt: '3 days ago',
-    fileSize: '124 KB',
-    topics: ['Backpropagation', 'Chain Rule', 'Gradient Descent'],
-    excerpt: 'Personal study notes on backpropagation mechanics...',
-    sections: [
-      {
-        id: 's8',
-        title: 'Key Concepts',
-        page: 1,
-        content:
-          'Backpropagation = chain rule applied to neural networks. Forward pass computes output, backward pass computes gradients.',
-        highlights: ['chain rule', 'forward pass', 'backward pass'],
-      },
-    ],
-  },
-];
+export const mockDocuments: KnowledgeDocument[] = [];
 
 export const mockAssessmentSession: AssessmentSession = {
   id: 'a1',
@@ -672,32 +556,7 @@ export const mockKnowledgeGraph: KnowledgeGraph = {
   ],
 };
 
-export const mockSearchResults: SearchResult[] = [
-  {
-    id: 'sr1',
-    title: 'Gradient Descent',
-    type: 'pdf',
-    page: 72,
-    excerpt: 'Gradient descent updates weights by moving in the direction of the negative gradient...',
-    documentId: 'd1',
-  },
-  {
-    id: 'sr2',
-    title: 'Gradient Descent',
-    type: 'video',
-    timestamp: '32:18',
-    excerpt: 'In this segment, we discuss how backpropagation works with gradient descent...',
-    documentId: 'd2',
-  },
-  {
-    id: 'sr3',
-    title: 'Gradient Descent',
-    type: 'slide',
-    slide: 14,
-    excerpt: 'Week 5 slides covering optimization algorithms including gradient descent.',
-    documentId: 'd3',
-  },
-];
+export const mockSearchResults: SearchResult[] = [];
 
 export const mockLearningMemory = {
   confidentTopics: ['Linear Regression', 'Basic Python', 'Activation Functions'],

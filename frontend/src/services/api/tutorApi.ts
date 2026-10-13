@@ -40,7 +40,8 @@ export function adaptBackendMessageToConvMsg(msg: BackendTutorMessage): Conversa
 
 export async function askTutor(
   conversationId: string,
-  question: string
+  question: string,
+  materialId?: number | string
 ): Promise<TutorResponse> {
   if (USE_MOCK) {
     await new Promise((r) => setTimeout(r, 1200));
@@ -69,9 +70,14 @@ export async function askTutor(
     };
   }
 
+  const payload: Record<string, unknown> = { content: question };
+  if (materialId) {
+    payload.material_id = Number(materialId);
+  }
+
   const data = await apiRequest<BackendTutorMessage>('/api/tutor/chat', {
     method: 'POST',
-    body: { content: question },
+    body: payload,
   });
 
   const citations = (data.sources || []).map(adaptSourceToCitation);

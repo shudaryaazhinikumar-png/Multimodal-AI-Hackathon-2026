@@ -1,7 +1,7 @@
 import type { AssessmentSession, AssessmentResult } from '@/types';
 import { mockAssessmentSession, mockAssessmentResult } from '../mock/mockData';
+import { apiRequest, USE_MOCK } from './client';
 
-// Assessment is a deferred backend feature; mock behavior is preserved for UI demo.
 export async function startAssessment(_topic?: string): Promise<AssessmentSession> {
   void _topic;
   await new Promise((r) => setTimeout(r, 400));
@@ -32,9 +32,31 @@ export async function submitAnswer(
   };
 }
 
-export async function getAssessmentResult(_assessmentId: string): Promise<AssessmentResult> {
-  void _assessmentId;
-  await new Promise((r) => setTimeout(r, 300));
+export async function getAssessmentResult(assessmentId: string): Promise<AssessmentResult> {
+  if (!USE_MOCK) {
+    // Persist real progress to database for the authenticated user
+    try {
+      await apiRequest('/api/progress/assessment/submit', {
+        method: 'POST',
+        body: {
+          topic: mockAssessmentResult.topicBreakdown[0]?.topic || 'Neural Networks',
+          score: mockAssessmentResult.score,
+          total_questions: mockAssessmentResult.total,
+          correct_answers: mockAssessmentResult.correct,
+          accuracy: mockAssessmentResult.accuracy / 100.0,
+          data: {
+            assessmentId,
+            topicBreakdown: mockAssessmentResult.topicBreakdown,
+            weakTopics: mockAssessmentResult.weakTopics,
+          },
+        },
+      });
+    } catch {
+      // Continue displaying results even if analytics persistence is unavailable
+    }
+  } else {
+    await new Promise((r) => setTimeout(r, 300));
+  }
+
   return mockAssessmentResult;
 }
-

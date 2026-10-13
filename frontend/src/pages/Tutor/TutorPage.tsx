@@ -16,6 +16,7 @@ import { ClayButton } from '@/components/clay/ClayButton';
 import { ClayBadge } from '@/components/clay/ClayBadge';
 import { ClayDrawer } from '@/components/clay/ClayTabs';
 import { useTutor } from '@/hooks/useTutor';
+import { useKnowledge } from '@/hooks/useKnowledge';
 import { AIMessage, UserMessage, TypingIndicator, SourcePreviewContent } from '@/components/tutor/MessageComponents';
 import { LoadingState } from '@/components/ui/States';
 import type { SourceCitation } from '@/types';
@@ -35,6 +36,8 @@ const learningMemory = {
 
 export function TutorPage() {
   const { conversations, activeConversation, loading, sending, selectConversation, sendMessage, newConversation } = useTutor();
+  const { documents } = useKnowledge();
+  const [selectedMaterialId, setSelectedMaterialId] = useState<string>('all');
   const [input, setInput] = useState('');
   const [selectedCitation, setSelectedCitation] = useState<SourceCitation | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -51,12 +54,14 @@ export function TutorPage() {
     if (!input.trim() || sending) return;
     const q = input;
     setInput('');
-    await sendMessage(q);
+    const matId = selectedMaterialId === 'all' ? undefined : selectedMaterialId;
+    await sendMessage(q, matId);
   };
 
   const handleSuggestion = async (q: string) => {
     setInput('');
-    await sendMessage(q);
+    const matId = selectedMaterialId === 'all' ? undefined : selectedMaterialId;
+    await sendMessage(q, matId);
   };
 
   const handleCitationClick = (c: SourceCitation) => {
@@ -137,10 +142,32 @@ export function TutorPage() {
                 <p className="text-xs text-clay-500">AI Tutor · Source-cited</p>
               </div>
             </div>
-            <ClayBadge variant="success" className="hidden sm:inline-flex">
-              <Sparkles size={12} />
-              Online
-            </ClayBadge>
+            <div className="flex items-center gap-2">
+              {documents.length > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <label htmlFor="material-select" className="hidden text-xs font-medium text-clay-600 sm:inline">
+                    Document:
+                  </label>
+                  <select
+                    id="material-select"
+                    value={selectedMaterialId}
+                    onChange={(e) => setSelectedMaterialId(e.target.value)}
+                    className="max-w-[140px] truncate rounded-clay border border-ivory-300 bg-ivory-50 px-2 py-1 text-xs text-charcoal-800 shadow-clay-sm focus:outline-none sm:max-w-[200px]"
+                  >
+                    <option value="all">All Documents</option>
+                    {documents.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <ClayBadge variant="success" className="hidden sm:inline-flex">
+                <Sparkles size={12} />
+                Online
+              </ClayBadge>
+            </div>
           </div>
 
           {/* Messages */}

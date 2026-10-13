@@ -84,7 +84,7 @@ export function LearningWorkspacePage() {
                   <div className="h-full rounded-full bg-violet-500" style={{ width: '32%' }} />
                 </div>
                 <div className="flex justify-between text-xs text-white/70">
-                  <span>{videoDoc?.title}</span>
+                  <span>{videoDoc?.title || 'Learning Resource'}</span>
                   <span>15:30 / 48:00</span>
                 </div>
               </div>

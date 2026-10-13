@@ -28,7 +28,7 @@ export function useTutor() {
   }, []);
 
   const sendMessage = useCallback(
-    async (question: string) => {
+    async (question: string, materialId?: number | string) => {
       setSending(true);
 
       const userMsg: ConversationMessage = {
@@ -51,7 +51,7 @@ export function useTutor() {
 
       try {
         const convId = activeConversation?.id || 'current-session';
-        const response = await askTutor(convId, question);
+        const response = await askTutor(convId, question, materialId);
 
         const aiMsg: ConversationMessage = {
           id: `m-${Date.now() + 1}`,
