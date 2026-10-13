@@ -113,3 +113,112 @@ class VectorStoreTestCase(SimpleTestCase):
             query_embedding=[1.0, 0.0, 0.0, 0.0],
         )
         self.assertEqual(len(results_after), 0)
+
+    def test_search_retains_high_relevance_and_filters_low_relevance(self):
+        # Chunk A is aligned with query [1.0, 0.0, 0.0, 0.0] -> cosine similarity 1.0, relevance 1.0
+        # Chunk B is orthogonal [0.0, 1.0, 0.0, 0.0] -> cosine similarity 0.0, distance 1.0, relevance 0.50
+        self.vectorstore.add_chunks(
+            user_id=1,
+            material_id=20,
+            document_id=7,
+            material_title="Mixed Relevance Notes",
+            material_type="pdf",
+            chunks=[
+                {"chunk_index": 0, "text": "Highly relevant machine learning concept", "page_number": 1},
+                {"chunk_index": 1, "text": "Unrelated orthogonal text topic", "page_number": 2},
+            ],
+            embeddings=[
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+            ],
+        )
+
+        # Search with min_relevance=0.65
+        results = self.vectorstore.search(
+            user_id=1,
+            query_embedding=[1.0, 0.0, 0.0, 0.0],
+            n_results=5,
+            min_relevance=0.65,
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["text"], "Highly relevant machine learning concept")
+        self.assertEqual(results[0]["page"], 1)
+        self.assertGreaterEqual(results[0]["relevance"], 0.65)
+
+    def test_search_all_below_threshold_returns_empty(self):
+        self.vectorstore.add_chunks(
+            user_id=1,
+            material_id=21,
+            document_id=8,
+            material_title="Orthogonal Notes",
+            material_type="pdf",
+            chunks=[
+                {"chunk_index": 0, "text": "Only orthogonal content", "page_number": 1},
+            ],
+            embeddings=[
+                [0.0, 1.0, 0.0, 0.0],
+            ],
+        )
+
+        # Query aligned with [1.0, 0.0, 0.0, 0.0] yields relevance 0.50
+        results = self.vectorstore.search(
+            user_id=1,
+            query_embedding=[1.0, 0.0, 0.0, 0.0],
+            min_relevance=0.65,
+        )
+        self.assertEqual(len(results), 0)
+
+    def test_search_zero_threshold_returns_all(self):
+        self.vectorstore.add_chunks(
+            user_id=1,
+            material_id=22,
+            document_id=9,
+            material_title="All Notes",
+            material_type="pdf",
+            chunks=[
+                {"chunk_index": 0, "text": "Relevant note", "page_number": 1},
+                {"chunk_index": 1, "text": "Distant note", "page_number": 2},
+            ],
+            embeddings=[
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+            ],
+        )
+
+        results = self.vectorstore.search(
+            user_id=1,
+            query_embedding=[1.0, 0.0, 0.0, 0.0],
+            min_relevance=0.0,
+        )
+        self.assertEqual(len(results), 2)
+
+    def test_search_material_specific_filtering_with_relevance(self):
+        self.vectorstore.add_chunks(
+            user_id=1,
+            material_id=30,
+            document_id=10,
+            material_title="Material 30",
+            material_type="pdf",
+            chunks=[{"chunk_index": 0, "text": "Material 30 chunk", "page_number": 1}],
+            embeddings=[[1.0, 0.0, 0.0, 0.0]],
+        )
+        self.vectorstore.add_chunks(
+            user_id=1,
+            material_id=31,
+            document_id=11,
+            material_title="Material 31",
+            material_type="pdf",
+            chunks=[{"chunk_index": 0, "text": "Material 31 chunk", "page_number": 1}],
+            embeddings=[[1.0, 0.0, 0.0, 0.0]],
+        )
+
+        results = self.vectorstore.search(
+            user_id=1,
+            query_embedding=[1.0, 0.0, 0.0, 0.0],
+            material_id=30,
+            min_relevance=0.65,
+        )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["materialId"], 30)
+        self.assertEqual(results[0]["sourceName"], "Material 30")

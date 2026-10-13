@@ -23,6 +23,7 @@ urlpatterns = [
     path("api/materials/", include("materials.urls")),
     path("api/knowledge/", include("knowledge.urls")),
     path("api/tutor/", include("tutor.urls")),
+    path("api/progress/", include("progress.urls")),
 ]
 
 

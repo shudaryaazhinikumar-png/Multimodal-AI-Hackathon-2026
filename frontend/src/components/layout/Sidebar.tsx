@@ -1,126 +1,113 @@
-import { NavLink } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import {
   LayoutDashboard,
-  Upload,
-  Sparkles,
-  CheckSquare,
-  TrendingUp,
-  Lightbulb,
-  BookOpen,
-  Settings,
-  User,
-  ChevronLeft,
   GraduationCap,
+  MessageSquare,
+  Library,
+  ClipboardCheck,
+  TrendingUp,
+  RefreshCw,
+  User,
+  Settings,
+  LogOut,
+  Flame,
+  Brain,
 } from 'lucide-react';
-
-interface SidebarProps {
-  collapsed: boolean;
-  onToggle: () => void;
-  mobileOpen: boolean;
-  onCloseMobile: () => void;
-}
+import { cn } from '@/lib/utils';
+import { useAuth } from '@/hooks/useAuth';
 
 const navItems = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/materials', label: 'Materials', icon: Upload },
-  { to: '/tutor', label: 'AI Tutor', icon: Sparkles, accent: 'plum' },
-  { to: '/quiz', label: 'Quizzes', icon: CheckSquare },
-  { to: '/progress', label: 'My Progress', icon: TrendingUp },
-  { to: '/recommendations', label: 'Recommendations', icon: Lightbulb },
-  { to: '/knowledge-base', label: 'Knowledge Base', icon: BookOpen },
-];
-
-const secondaryItems = [
+  { to: '/learning', label: 'My Learning', icon: GraduationCap },
+  { to: '/tutor', label: 'AI Tutor', icon: MessageSquare },
+  { to: '/knowledge', label: 'Knowledge Base', icon: Library },
+  { to: '/assessment', label: 'Assessments', icon: ClipboardCheck },
+  { to: '/progress', label: 'Progress', icon: TrendingUp },
+  { to: '/revision', label: 'Revision', icon: RefreshCw },
+  { to: '/knowledge-map', label: 'Knowledge Map', icon: Brain },
   { to: '/profile', label: 'Profile', icon: User },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
 
-export function Sidebar({ collapsed, onToggle, mobileOpen, onCloseMobile }: SidebarProps) {
+export function Sidebar() {
+  const navigate = useNavigate();
+  const { user, logout } = useAuth();
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/');
+  };
+
   return (
-    <>
-      {mobileOpen && (
-        <div className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm lg:hidden" onClick={onCloseMobile} />
-      )}
-      <aside
-        className={`fixed lg:sticky top-0 z-40 h-screen border-r border-border bg-surface transition-all duration-300 ${
-          collapsed ? 'w-20' : 'w-64'
-        } ${mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
-      >
-        <div className="flex h-full flex-col">
-          {/* Logo */}
-          <div className="flex items-center gap-3 border-b border-border px-5 py-5 h-16">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary">
-              <GraduationCap size={20} className="text-white" />
-            </div>
-            {!collapsed && (
-              <div className="overflow-hidden">
-                <p className="text-sm font-bold text-text-primary leading-tight">Learning Companion</p>
-                <p className="text-[10px] text-text-secondary">AI Personalized</p>
-              </div>
-            )}
+    <aside className="fixed left-0 top-0 z-30 hidden h-screen w-64 flex-col border-r border-ivory-200 bg-ivory-50 px-4 py-6 lg:flex">
+      <div className="mb-8 px-3">
+        <div className="flex items-center gap-2">
+          <div className="flex h-10 w-10 items-center justify-center rounded-clay bg-violet-600 shadow-clay-raised">
+            <Brain size={22} className="text-white" />
           </div>
-
-          {/* Navigation */}
-          <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
-            {!collapsed && <p className="px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-text-secondary">Main</p>}
-            {navItems.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                onClick={onCloseMobile}
-                className={({ isActive }) =>
-                  `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200 ${
-                    isActive
-                      ? 'bg-primary-soft text-primary'
-                      : 'text-text-secondary hover:bg-surface-elevated hover:text-text-primary'
-                  } ${collapsed ? 'justify-center' : ''}`
-                }
-                title={collapsed ? item.label : undefined}
-              >
-                {({ isActive }) => (
-                  <>
-                    <item.icon
-                      size={20}
-                      className={`shrink-0 ${isActive && item.accent === 'plum' ? 'text-plum' : ''}`}
-                    />
-                    {!collapsed && <span>{item.label}</span>}
-                  </>
-                )}
-              </NavLink>
-            ))}
-
-            {!collapsed && <p className="px-3 py-1 mt-6 text-[10px] font-medium uppercase tracking-wider text-text-secondary">Account</p>}
-            {secondaryItems.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                onClick={onCloseMobile}
-                className={({ isActive }) =>
-                  `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200 ${
-                    isActive
-                      ? 'bg-primary-soft text-primary'
-                      : 'text-text-secondary hover:bg-surface-elevated hover:text-text-primary'
-                  } ${collapsed ? 'justify-center' : ''}`
-                }
-                title={collapsed ? item.label : undefined}
-              >
-                <item.icon size={20} className="shrink-0" />
-                {!collapsed && <span>{item.label}</span>}
-              </NavLink>
-            ))}
-          </nav>
-
-          {/* Collapse toggle */}
-          <button
-            onClick={onToggle}
-            className="hidden lg:flex items-center justify-center gap-2 border-t border-border px-4 py-3 text-text-secondary hover:text-text-primary transition-colors"
-            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          >
-            <ChevronLeft size={18} className={`transition-transform duration-300 ${collapsed ? 'rotate-180' : ''}`} />
-            {!collapsed && <span className="text-xs">Collapse</span>}
-          </button>
+          <div>
+            <p className="text-sm font-bold text-charcoal-900">AI Study</p>
+            <p className="text-xs text-clay-500">Companion</p>
+          </div>
         </div>
-      </aside>
-    </>
+      </div>
+
+      <nav className="flex-1 space-y-1 overflow-y-auto">
+        {navItems.map((item) => {
+          const Icon = item.icon;
+          return (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              className={({ isActive }) =>
+                cn(
+                  'relative flex items-center gap-3 rounded-clay px-3 py-2.5 text-sm font-medium transition-all duration-200',
+                  isActive
+                    ? 'text-violet-700'
+                    : 'text-clay-600 hover:bg-ivory-100 hover:text-charcoal-700'
+                )
+              }
+            >
+              {({ isActive }) => (
+                <>
+                  {isActive && (
+                    <motion.div
+                      layoutId="sidebar-active"
+                      className="absolute inset-0 rounded-clay bg-clay-50 shadow-clay-raised"
+                      transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+                    />
+                  )}
+                  <Icon size={18} className="relative z-10" />
+                  <span className="relative z-10">{item.label}</span>
+                </>
+              )}
+            </NavLink>
+          );
+        })}
+      </nav>
+
+      <div className="mt-4 rounded-clay bg-clay-50 p-4 shadow-clay-sm">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-violet-100 text-sm font-bold text-violet-700">
+            {user?.name?.charAt(0) || 'A'}
+          </div>
+          <div className="flex-1 overflow-hidden">
+            <p className="truncate text-sm font-semibold text-charcoal-900">{user?.name || 'Alex Chen'}</p>
+            <div className="flex items-center gap-1 text-xs text-clay-500">
+              <Flame size={12} className="text-peach-400" />
+              <span>{user?.streak || 12} day streak</span>
+            </div>
+          </div>
+        </div>
+        <button
+          onClick={handleLogout}
+          className="mt-3 flex w-full items-center gap-2 rounded-clay bg-ivory-100 px-3 py-2 text-xs font-medium text-clay-600 hover:bg-ivory-200 hover:text-charcoal-700"
+        >
+          <LogOut size={14} />
+          Logout
+        </button>
+      </div>
+    </aside>
   );
 }

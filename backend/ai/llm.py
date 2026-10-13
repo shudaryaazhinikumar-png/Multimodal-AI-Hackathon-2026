@@ -149,12 +149,6 @@ class GeminiLLMService(BaseLLMService):
 
             except urllib.error.HTTPError as e:
                 code = e.code
-                error_body = ""
-                try:
-                    error_body = e.read().decode("utf-8")
-                except Exception:
-                    pass
-
                 if code in (401, 403):
                     logger.error("Gemini authentication failed (HTTP %s).", code)
                     raise LLMAuthError(f"Gemini authentication failed with status {code}.") from None
@@ -339,6 +333,172 @@ class OpenAILLMService(BaseLLMService):
         raise LLMGenerationError("OpenAI generation failed after retries.")
 
 
+class OllamaLLMService(BaseLLMService):
+    """
+    Ollama local LLM service implementation with retry and health checks.
+    Supports local models such as qwen2.5:0.5b via Ollama's native API.
+    """
+
+    TRANSIENT_STATUS_CODES: Set[int] = {429, 500, 502, 503, 504}
+
+    def __init__(
+        self,
+        model: Optional[str] = None,
+        base_url: Optional[str] = None,
+        timeout: int = 60,
+        max_retries: int = 2,
+        initial_backoff: float = 1.0,
+        sleep_func: Callable[[float], None] = time.sleep,
+    ):
+        self.model = (
+            model
+            or os.getenv("OLLAMA_MODEL")
+            or getattr(settings, "OLLAMA_MODEL", "qwen2.5:0.5b")
+        )
+        self.base_url = (
+            base_url
+            or os.getenv("OLLAMA_BASE_URL")
+            or getattr(settings, "OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+        ).rstrip("/")
+        self.timeout = timeout
+        self.max_retries = max(1, max_retries)
+        self.initial_backoff = initial_backoff
+        self.sleep_func = sleep_func
+
+    def check_health(self) -> Dict[str, Any]:
+        """
+        Checks connectivity to Ollama server and verifies if configured model is available.
+        """
+        url = f"{self.base_url}/api/tags"
+        req = urllib.request.Request(url, method="GET")
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            models = [m.get("name", "") for m in data.get("models", [])]
+            return {
+                "status": "healthy",
+                "models": models,
+                "model_available": any(self.model in m for m in models),
+            }
+        except Exception as e:
+            return {
+                "status": "unhealthy",
+                "error": str(e),
+                "models": [],
+                "model_available": False,
+            }
+
+    def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
+        if not prompt or not prompt.strip():
+            raise LLMInvalidRequestError("Prompt cannot be empty.")
+
+        url = f"{self.base_url}/api/chat"
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "stream": False,
+            "options": {
+                "temperature": 0.3,
+            },
+        }
+
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        last_error: Optional[Exception] = None
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout) as response:
+                    resp_data = json.loads(response.read().decode("utf-8"))
+
+                msg = resp_data.get("message", {})
+                content = msg.get("content", "")
+                if not content or not content.strip():
+                    content = resp_data.get("response", "")
+
+                if not content or not content.strip():
+                    raise LLMGenerationError("Empty text response returned from Ollama.")
+
+                if resp_data.get("done_reason") == "length":
+                    logger.warning("Ollama response was truncated due to length limits.")
+
+                return content.strip()
+
+            except urllib.error.HTTPError as e:
+                code = e.code
+                if code == 404:
+                    logger.error("Model '%s' not found in Ollama (HTTP 404).", self.model)
+                    raise LLMInvalidRequestError(
+                        f"Model '{self.model}' not found in Ollama or endpoint invalid (HTTP 404)."
+                    ) from None
+                elif code == 400:
+                    logger.error("Ollama invalid request (HTTP 400).")
+                    raise LLMInvalidRequestError(
+                        "Ollama API request invalid (HTTP 400)."
+                    ) from None
+                elif code in self.TRANSIENT_STATUS_CODES:
+                    last_error = LLMUnavailableError(
+                        f"Ollama server temporarily unavailable (HTTP {code})."
+                    )
+                else:
+                    logger.error("Ollama request failed with HTTP %s.", code)
+                    raise LLMGenerationError(
+                        f"Ollama API request failed with status {code}."
+                    ) from None
+
+                if attempt < self.max_retries:
+                    backoff = self.initial_backoff * (2 ** (attempt - 1))
+                    logger.warning(
+                        "Ollama request failed with HTTP %s; retrying (attempt %d/%d) in %.1fs...",
+                        code,
+                        attempt,
+                        self.max_retries,
+                        backoff,
+                    )
+                    self.sleep_func(backoff)
+                else:
+                    logger.error("Ollama request failed after %d attempt(s) with HTTP %s.", attempt, code)
+                    raise last_error from None
+
+            except urllib.error.URLError as e:
+                logger.error("Failed to connect to Ollama at %s: %s", self.base_url, e)
+                last_error = LLMUnavailableError(
+                    f"Ollama service unreachable at {self.base_url}."
+                )
+                if attempt < self.max_retries:
+                    backoff = self.initial_backoff * (2 ** (attempt - 1))
+                    self.sleep_func(backoff)
+                else:
+                    raise last_error from None
+
+            except (KeyError, IndexError, json.JSONDecodeError) as e:
+                logger.error("Failed to parse Ollama response: %s", type(e).__name__)
+                raise LLMGenerationError("Invalid response structure from Ollama API.") from None
+            except (LLMConfigError, LLMAuthError, LLMInvalidRequestError, LLMGenerationError):
+                raise
+            except Exception as e:
+                logger.error("Ollama connection error on attempt %d/%d: %s", attempt, self.max_retries, type(e).__name__)
+                last_error = LLMGenerationError(f"Failed to communicate with Ollama: {type(e).__name__}")
+                if attempt < self.max_retries:
+                    backoff = self.initial_backoff * (2 ** (attempt - 1))
+                    self.sleep_func(backoff)
+                else:
+                    raise last_error from None
+
+        if last_error:
+            raise last_error from None
+        raise LLMGenerationError("Ollama generation failed after retries.")
+
+
 class UnconfiguredLLMService(BaseLLMService):
     """
     Fallback service when no LLM provider or API key is configured.
@@ -409,6 +569,21 @@ def _instantiate_provider(
             base_url=base_url or os.getenv("AI_FALLBACK_BASE_URL", "https://api.groq.com/openai/v1"),
             model=model or os.getenv("AI_FALLBACK_MODEL", "llama-3.3-70b-versatile"),
         )
+    elif provider in ("ollama", "local"):
+        ollama_model = (
+            model
+            if model and not any(cloud in model.lower() for cloud in ("gemini", "gpt", "claude"))
+            else os.getenv("OLLAMA_MODEL")
+        )
+        ollama_base = (
+            base_url
+            if base_url and not any(cloud in base_url for cloud in ("googleapis.com", "api.openai.com", "api.groq.com"))
+            else os.getenv("OLLAMA_BASE_URL")
+        )
+        return OllamaLLMService(
+            model=ollama_model,
+            base_url=ollama_base,
+        )
     elif provider in ("generic_openai", "custom"):
         return OpenAILLMService(api_key=api_key, model=model, base_url=base_url)
     else:
@@ -433,14 +608,16 @@ def get_llm_service() -> BaseLLMService:
             provider = "groq"
         elif os.getenv("AI_API_KEY"):
             provider = "gemini"
+        elif os.getenv("OLLAMA_MODEL") or os.getenv("OLLAMA_BASE_URL"):
+            provider = "ollama"
         else:
             return UnconfiguredLLMService()
 
     primary_service = _instantiate_provider(
         provider,
-        model=os.getenv("AI_MODEL") or getattr(settings, "AI_MODEL", None),
+        model=os.getenv("AI_MODEL") or os.getenv("OLLAMA_MODEL") or getattr(settings, "AI_MODEL", None),
         api_key=os.getenv("GEMINI_API_KEY") or os.getenv("OPENAI_API_KEY") or os.getenv("AI_API_KEY"),
-        base_url=os.getenv("AI_BASE_URL") or getattr(settings, "AI_BASE_URL", None),
+        base_url=os.getenv("AI_BASE_URL") or os.getenv("OLLAMA_BASE_URL") or getattr(settings, "AI_BASE_URL", None),
     )
 
     fallback_provider = os.getenv("AI_FALLBACK_PROVIDER") or getattr(settings, "AI_FALLBACK_PROVIDER", None)
@@ -448,7 +625,13 @@ def get_llm_service() -> BaseLLMService:
         fallback_service = _instantiate_provider(
             fallback_provider,
             model=os.getenv("AI_FALLBACK_MODEL") or getattr(settings, "AI_FALLBACK_MODEL", None),
-            api_key=os.getenv("AI_FALLBACK_API_KEY") or os.getenv("GROQ_API_KEY") or os.getenv("OPENAI_API_KEY"),
+            api_key=(
+                os.getenv("AI_FALLBACK_API_KEY")
+                or os.getenv("GROQ_API_KEY")
+                or os.getenv("OPENAI_API_KEY")
+                or os.getenv("GEMINI_API_KEY")
+                or os.getenv("AI_API_KEY")
+            ),
             base_url=os.getenv("AI_FALLBACK_BASE_URL") or getattr(settings, "AI_FALLBACK_BASE_URL", None),
         )
         return FallbackLLMService(primary=primary_service, fallback=fallback_service)

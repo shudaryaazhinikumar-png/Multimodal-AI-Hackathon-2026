@@ -1,148 +1,290 @@
-export type MaterialType = 'pdf' | 'ppt' | 'video';
-export type ProcessingStatus = 'processing' | 'ready' | 'failed' | 'uploading';
+export type SourceType = 'pdf' | 'video' | 'slide' | 'note';
 
-export interface Student {
+export interface SourceCitation {
+  id: string;
+  title: string;
+  type: SourceType;
+  page?: number;
+  slide?: number;
+  timestamp?: string;
+  excerpt?: string;
+}
+
+export interface TutorResponse {
+  answer: string;
+  citations: SourceCitation[];
+  confidence?: number;
+  suggestedActions?: string[];
+}
+
+export interface ConversationMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  citations?: SourceCitation[];
+  timestamp: string;
+  suggestedActions?: string[];
+}
+
+export interface Conversation {
+  id: string;
+  title: string;
+  messages: ConversationMessage[];
+  lastMessage: string;
+  timestamp: string;
+}
+
+export interface KnowledgeDocument {
+  id: string;
+  title: string;
+  type: SourceType;
+  pages?: number;
+  slides?: number;
+  duration?: string;
+  status: 'indexed' | 'processing' | 'transcribed' | 'ready';
+  uploadedAt: string;
+  fileSize: string;
+  topics: string[];
+  excerpt?: string;
+  sections?: DocumentSection[];
+}
+
+export interface DocumentSection {
+  id: string;
+  title: string;
+  page?: number;
+  slide?: number;
+  timestamp?: string;
+  content: string;
+  highlights?: string[];
+}
+
+export interface AssessmentQuestion {
+  id: string;
+  question: string;
+  options: { id: string; text: string }[];
+  difficulty: 'easy' | 'medium' | 'hard';
+  topic: string;
+  correctOptionId: string;
+  explanation?: string;
+}
+
+export interface AssessmentSession {
+  id: string;
+  title: string;
+  totalQuestions: number;
+  currentQuestion: number;
+  completed: boolean;
+  questions: AssessmentQuestion[];
+  answers: Record<string, string>;
+  difficultyLevel: 'beginner' | 'intermediate' | 'advanced';
+  startedAt: string;
+}
+
+export interface AssessmentResult {
+  id: string;
+  score: number;
+  accuracy: number;
+  correct: number;
+  incorrect: number;
+  total: number;
+  topicBreakdown: { topic: string; mastery: number }[];
+  weakTopics: { topic: string; recall: string; lastAttempt: string }[];
+  recommendedRevision: string;
+  completedAt: string;
+  difficultyHistory: { question: number; difficulty: string; correct: boolean }[];
+}
+
+export interface RevisionItem {
+  id: string;
+  topic: string;
+  reason: string;
+  estimatedTime: string;
+  priority: 'high' | 'medium' | 'low';
+  category: 'due-today' | 'weak-topics' | 'recently-learned' | 'high-priority';
+  recommendations?: { label: string; value: string }[];
+}
+
+export interface LearningTopic {
+  id: string;
+  title: string;
+  status: 'complete' | 'current' | 'recommended' | 'upcoming';
+  progress: number;
+  estimatedTime: string;
+  description: string;
+  subtopics?: string[];
+  materials?: { title: string; type: SourceType }[];
+}
+
+export interface LearningPath {
+  id: string;
+  title: string;
+  description: string;
+  progress: number;
+  topics: LearningTopic[];
+  totalTopics: number;
+  completedTopics: number;
+}
+
+export interface ProgressAnalytics {
+  knowledgeScore: number;
+  retention: number;
+  consistency: number;
+  weakAreas: number;
+  knowledgeGrowth: { date: string; score: number }[];
+  accuracyOverTime: { date: string; accuracy: number }[];
+  studyTime: { date: string; minutes: number }[];
+  retentionData: { date: string; retention: number }[];
+  topicMastery: { topic: string; mastery: number }[];
+  weeklyActivity: { day: string; hours: number }[];
+  aiSummary: string;
+  strongestArea: string;
+}
+
+export interface UserProfile {
   id: string;
   name: string;
   email: string;
-  education: string;
-  learningGoal: string;
-  joinedDate: string;
-  studyStreak: number;
-  totalStudyTime: string;
-  quizzesCompleted: number;
-  avatar: string;
+  avatar?: string;
+  learningField: string;
+  level: 'beginner' | 'intermediate' | 'advanced';
+  goal: string;
+  dailyTarget: string;
+  streak: number;
+  topics: string[];
+  joinedAt: string;
+  bio?: string;
 }
 
-export interface Material {
+export interface LearningPreferences {
+  explanationStyle: 'simplified' | 'detailed' | 'technical';
+  pace: 'slow' | 'medium' | 'fast';
+  dailyReminder: boolean;
+  emailNotifications: boolean;
+  theme: 'light' | 'dark' | 'auto';
+}
+
+export interface KnowledgeGraphNode {
+  id: string;
+  label: string;
+  mastery: number;
+  x: number;
+  y: number;
+  children?: string[];
+  relatedMaterials?: string[];
+}
+
+export interface KnowledgeGraphEdge {
+  from: string;
+  to: string;
+}
+
+export interface KnowledgeGraph {
+  nodes: KnowledgeGraphNode[];
+  edges: KnowledgeGraphEdge[];
+}
+
+export interface SearchResult {
+  id: string;
+  title: string;
+  type: SourceType;
+  page?: number;
+  slide?: number;
+  timestamp?: string;
+  excerpt: string;
+  documentId: string;
+}
+
+export interface ApiError {
+  status: number;
+  message: string;
+  code?: string;
+  details?: unknown;
+}
+
+// Backend API contracts
+export interface BackendStudent {
   id: string;
   name: string;
-  type: MaterialType;
-  size: string;
-  uploadedDate: string;
-  status: ProcessingStatus;
-  chunks: number;
-  progress?: number;
-  processingStep?: string;
+  email: string;
+  education?: string;
+  learningGoal?: string;
+  joinedDate?: string;
+  avatar?: string;
 }
 
-export interface KnowledgeSearchResult {
+export interface BackendAuthResponse extends BackendStudent {
+  token: string;
+}
+
+export interface BackendMaterial {
+  id: number;
+  title: string;
+  file?: string;
+  fileUrl?: string;
+  materialType: 'pdf' | 'ppt' | string;
+  status: 'pending' | 'processing' | 'processed' | 'failed';
+  fileSize: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BackendKnowledgeChunk {
+  id: number;
+  chunk_index: number;
+  text: string;
+  page_number?: number | null;
+  slide_number?: number | null;
+  metadata?: Record<string, unknown>;
+  created_at?: string;
+}
+
+export interface BackendKnowledgeDocument {
+  id: number;
+  material: number;
+  materialTitle: string;
+  materialType: string;
+  status: 'pending' | 'processing' | 'processed' | 'failed';
+  chunk_count: number;
+  embedding_model?: string;
+  error_message?: string;
+  created_at: string;
+  updated_at: string;
+  chunks?: BackendKnowledgeChunk[];
+}
+
+export interface BackendSearchHit {
   id: string;
   text: string;
   sourceName: string;
-  sourceType: MaterialType;
-  page?: number;
-  slide?: number;
-  timestamp?: string;
+  sourceType: string;
+  page?: number | null;
+  slide?: number | null;
   relevance: number;
+  materialId?: number;
+  documentId?: number;
+  title?: string;
+  chunkIndex?: number;
+  score?: number;
 }
 
-export interface ChatSource {
+export interface BackendTutorSource {
   id: string;
   title: string;
-  type: MaterialType | 'other';
-  page?: number;
-  slide?: number;
-  timestamp?: string;
-  snippet: string;
+  type: string;
+  snippet?: string;
+  page?: number | null;
+  slide?: number | null;
   relevance?: number;
   materialId?: number;
   documentId?: number;
   chunkIndex?: number;
 }
 
-export interface ChatMessage {
+export interface BackendTutorMessage {
   id: string;
   role: 'student' | 'ai';
   content: string;
-  sources?: ChatSource[];
+  sources: BackendTutorSource[];
   timestamp: string;
-  isStreaming?: boolean;
-}
-
-export interface QuizQuestion {
-  id: string;
-  question: string;
-  options: string[];
-  correctAnswer: number;
-  topic: string;
-  difficulty: 'beginner' | 'intermediate' | 'advanced';
-  explanation?: string;
-}
-
-export interface QuizConfig {
-  topic: string;
-  difficulty: 'adaptive' | 'beginner' | 'intermediate' | 'advanced';
-  numQuestions: number;
-}
-
-export interface QuizResult {
-  quizId: string;
-  topic: string;
-  score: number;
-  correct: number;
-  total: number;
-  accuracy: number;
-  timeSpent: string;
-  topicAnalysis: { topic: string; mastery: number }[];
-  date: string;
-  difficultyAdjustments?: { from: string; to: string; topic: string; reason: string }[];
-}
-
-export interface Subject {
-  name: string;
-  mastery: number;
-  topicsLearned: number;
-  totalTopics: number;
-  trend: number;
-}
-
-export interface ProgressData {
-  overallMastery: number;
-  weeklyImprovement: number;
-  subjects: Subject[];
-  masteryTrend: { day: string; mastery: number }[];
-  quizHistory: { date: string; score: number; topic: string; difficulty: string }[];
-  topicHeatmap: { topic: string; mastery: number }[];
-}
-
-export interface Recommendation {
-  id: string;
-  title: string;
-  priority: 'high' | 'medium' | 'low';
-  reason: string;
-  recommendation: string;
-  estimatedTime: string;
-  difficulty: string;
-  topic: string;
-}
-
-export interface LearningPlanItem {
-  id: string;
-  task: string;
-  status: 'done' | 'current' | 'todo';
-  time: string;
-}
-
-export interface Notification {
-  id: string;
-  type: 'mastery' | 'recommendation' | 'quiz' | 'streak';
-  title: string;
-  message: string;
-  time: string;
-  read: boolean;
-}
-
-export interface RecentActivity {
-  id: string;
-  type: 'quiz' | 'material' | 'mastery' | 'recommendation';
-  title: string;
-  description: string;
-  time: string;
-}
-
-export interface AgentActivity {
-  agent: string;
-  status: 'idle' | 'active' | 'done';
-  description: string;
 }

@@ -4,5 +4,7 @@ from . import views
 
 urlpatterns = [
     path("search", views.knowledge_search, name="knowledge-search"),
+    path("search/", views.knowledge_search, name="knowledge-search-slash"),
     path("documents/<int:material_id>", views.document_detail, name="knowledge-document-detail"),
+    path("documents/<int:material_id>/", views.document_detail, name="knowledge-document-detail-slash"),
 ]

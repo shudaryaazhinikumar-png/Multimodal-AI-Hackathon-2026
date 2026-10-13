@@ -6,8 +6,10 @@ Backend configuration.
 """
 
 import os
+import urllib.parse
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 
@@ -17,8 +19,8 @@ from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Load environment variables from backend/.env
-load_dotenv(BASE_DIR / ".env")
+# Load environment variables from backend/.env (allowing .env to override shell defaults)
+load_dotenv(BASE_DIR / ".env", override=True)
 
 
 # ============================================================
@@ -65,6 +67,7 @@ INSTALLED_APPS = [
     "materials",
     "knowledge",
     "tutor",
+    "progress",
 ]
 
 
@@ -125,12 +128,81 @@ WSGI_APPLICATION = "config.wsgi.application"
 # DATABASE
 # ============================================================
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+def configure_databases(debug: bool, database_url: str, base_dir: Path) -> dict:
+    url = (database_url or "").strip()
+    if url:
+        try:
+            parsed_db = urllib.parse.urlparse(url)
+        except Exception:
+            raise ImproperlyConfigured(
+                "Invalid DATABASE_URL: unable to parse database URL."
+            ) from None
+
+        scheme = (parsed_db.scheme or "").lower()
+        if scheme not in ("postgres", "postgresql"):
+            raise ImproperlyConfigured(
+                f"Invalid DATABASE_URL scheme '{scheme}'. Expected 'postgresql' or 'postgres'."
+            )
+
+        db_name = parsed_db.path.lstrip("/")
+        if not db_name:
+            raise ImproperlyConfigured(
+                "Invalid DATABASE_URL: database name is required."
+            )
+
+        db_host = parsed_db.hostname or ""
+        if not db_host:
+            raise ImproperlyConfigured(
+                "Invalid DATABASE_URL: database host is required."
+            )
+
+        try:
+            db_port = parsed_db.port or 5432
+        except ValueError:
+            raise ImproperlyConfigured(
+                "Invalid DATABASE_URL: port must be an integer between 1 and 65535."
+            ) from None
+
+        if not (1 <= db_port <= 65535):
+            raise ImproperlyConfigured(
+                "Invalid DATABASE_URL: port must be an integer between 1 and 65535."
+            )
+
+        return {
+            "default": {
+                "ENGINE": "django.db.backends.postgresql",
+                "NAME": urllib.parse.unquote(db_name),
+                "USER": urllib.parse.unquote(parsed_db.username or ""),
+                "PASSWORD": urllib.parse.unquote(parsed_db.password or ""),
+                "HOST": db_host,
+                "PORT": db_port,
+            }
+        }
+
+    if not debug:
+        raise ImproperlyConfigured(
+            "DATABASE_URL environment variable is required when DJANGO_DEBUG=False."
+        )
+
+    return {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": base_dir / "db.sqlite3",
+        }
     }
-}
+
+
+DATABASES = configure_databases(DEBUG, os.getenv("DATABASE_URL", ""), BASE_DIR)
+
+CHROMA_PERSIST_DIRECTORY = os.getenv(
+    "CHROMA_PERSIST_DIRECTORY",
+    str(BASE_DIR / "chroma_db"),
+)
+
+# Minimum cosine relevance threshold for RAG retrieval filtering (0.0 - 1.0)
+RAG_MIN_RELEVANCE_THRESHOLD = float(
+    os.getenv("RAG_MIN_RELEVANCE_THRESHOLD", "0.65")
+)
 
 
 # ============================================================
@@ -209,6 +281,14 @@ REST_FRAMEWORK = {
         "rest_framework.authentication.TokenAuthentication",
         "rest_framework.authentication.SessionAuthentication",
     ],
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": "120/minute",
+        "user": "1200/minute",
+    },
 }
 
 
@@ -218,8 +298,12 @@ REST_FRAMEWORK = {
 
 # React/Vite development server
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ALLOWED_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174",
+    ).split(",")
+    if origin.strip()
 ]
 
 
@@ -228,8 +312,12 @@ CORS_ALLOWED_ORIGINS = [
 # ============================================================
 
 CSRF_TRUSTED_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
+    origin.strip()
+    for origin in os.getenv(
+        "CSRF_TRUSTED_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174",
+    ).split(",")
+    if origin.strip()
 ]
 
 

@@ -6,6 +6,7 @@ RAG context construction, and LLM text generation.
 import logging
 from typing import Any, Dict, List, Optional
 
+from django.conf import settings
 from knowledge.embeddings import get_embedding_service
 from knowledge.vectorstore import get_vectorstore
 from .llm import BaseLLMService, LLMError, get_llm_service
@@ -85,15 +86,19 @@ def generate_tutor_response(
     *,
     user_id: int,
     question: str,
+    material_id: Optional[int] = None,
+    min_relevance: Optional[float] = None,
     llm_service: Optional[BaseLLMService] = None,
 ) -> Dict[str, Any]:
     """
     Orchestrates the full RAG pipeline for an AI Tutor question:
     1. Embeds question and queries isolated user collection in ChromaDB.
-    2. Builds verified citations from actual retrieved chunks.
-    3. Builds RAG prompt with context excerpts and student query.
-    4. Calls LLM service to generate answer.
-    5. Returns dict with 'answer' and 'sources'.
+    2. Applies configurable relevance threshold filtering to discard off-topic/distractor chunks.
+    3. If no chunks meet the threshold, safely raises TutorNoMaterialError without calling the LLM.
+    4. Builds verified citations from actual qualifying chunks.
+    5. Builds RAG prompt with context excerpts and student query.
+    6. Calls LLM service to generate answer.
+    7. Returns dict with 'answer' and 'sources'.
     """
     normalized_question = question.strip() if question else ""
     if not normalized_question:
@@ -102,14 +107,32 @@ def generate_tutor_response(
     # 1. Vector Retrieval
     try:
         query_embedding = get_embedding_service().embed_query(normalized_question)
-        results = get_vectorstore().search(
-            user_id=user_id,
-            query_embedding=query_embedding,
-            n_results=5,
-        )
+        search_kwargs = {
+            "user_id": user_id,
+            "query_embedding": query_embedding,
+            "n_results": 5,
+        }
+        if material_id is not None:
+            search_kwargs["material_id"] = material_id
+        if min_relevance is not None:
+            search_kwargs["min_relevance"] = min_relevance
+
+        results = get_vectorstore().search(**search_kwargs)
     except Exception as e:
         logger.exception("Tutor retrieval failed for user %s: %s", user_id, e)
         raise TutorRetrievalError("Study material retrieval failed.") from e
+
+    # 2. Relevance Threshold Gating
+    effective_threshold = (
+        min_relevance
+        if min_relevance is not None
+        else getattr(settings, "RAG_MIN_RELEVANCE_THRESHOLD", 0.65)
+    )
+    if results and effective_threshold is not None and effective_threshold > 0.0:
+        results = [
+            r for r in results
+            if r.get("relevance") is None or r.get("relevance", 0.0) >= effective_threshold
+        ]
 
     if not results:
         raise TutorNoMaterialError("No relevant study material was found.")

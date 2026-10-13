@@ -17,6 +17,7 @@ from ai.tutor_service import (
     TutorRetrievalError,
     generate_tutor_response,
 )
+from materials.models import Material
 from .models import TutorMessage
 from .serializers import TutorChatRequestSerializer, TutorMessageSerializer
 
@@ -44,11 +45,24 @@ def tutor_chat(request):
         )
 
     content = serializer.validated_data["content"]
+    selected_material_id = serializer.validated_data.get("material_id") or serializer.validated_data.get("document_id")
+
+    # If a specific material is requested, authorize ownership and verify processed status
+    if selected_material_id:
+        if not Material.objects.filter(id=selected_material_id, user=request.user, status="processed").exists():
+            return Response(
+                {
+                    "code": "invalid_material",
+                    "error": "The selected study material does not exist or has not finished processing.",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
     try:
         response_data = generate_tutor_response(
             user_id=request.user.id,
             question=content,
+            material_id=selected_material_id,
         )
     except TutorNoMaterialError:
         return Response(
