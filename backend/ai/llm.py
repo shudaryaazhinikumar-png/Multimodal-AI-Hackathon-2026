@@ -149,12 +149,6 @@ class GeminiLLMService(BaseLLMService):
 
             except urllib.error.HTTPError as e:
                 code = e.code
-                error_body = ""
-                try:
-                    error_body = e.read().decode("utf-8")
-                except Exception:
-                    pass
-
                 if code in (401, 403):
                     logger.error("Gemini authentication failed (HTTP %s).", code)
                     raise LLMAuthError(f"Gemini authentication failed with status {code}.") from None
@@ -448,7 +442,13 @@ def get_llm_service() -> BaseLLMService:
         fallback_service = _instantiate_provider(
             fallback_provider,
             model=os.getenv("AI_FALLBACK_MODEL") or getattr(settings, "AI_FALLBACK_MODEL", None),
-            api_key=os.getenv("AI_FALLBACK_API_KEY") or os.getenv("GROQ_API_KEY") or os.getenv("OPENAI_API_KEY"),
+            api_key=(
+                os.getenv("AI_FALLBACK_API_KEY")
+                or os.getenv("GROQ_API_KEY")
+                or os.getenv("OPENAI_API_KEY")
+                or os.getenv("GEMINI_API_KEY")
+                or os.getenv("AI_API_KEY")
+            ),
             base_url=os.getenv("AI_FALLBACK_BASE_URL") or getattr(settings, "AI_FALLBACK_BASE_URL", None),
         )
         return FallbackLLMService(primary=primary_service, fallback=fallback_service)
